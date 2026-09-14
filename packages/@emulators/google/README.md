@@ -91,6 +91,8 @@ Groups Settings API: `GET`, `PUT` and `PATCH /groups/v1/groups/:groupUniqueId` (
 
 Refresh-token grants also return an RS256-signed `id_token` for the same user and client. The existing refresh token remains reusable.
 
+`POST /oauth2/revoke` accepts an access or refresh token in the `token` query parameter, a form body, or a JSON body. A non-empty body token takes precedence over the query parameter.
+
 Standard OAuth 2.0 authorization code flow with RS256-signed OIDC ID tokens. Configure clients in the seed config. The token endpoint accepts the client's credentials in the request body (`client_secret_post`) or in an HTTP Basic `Authorization` header (`client_secret_basic`), the two methods Google's discovery document lists. With OAuth clients configured, a request whose body credentials do not match the header returns `400 invalid_request`. The discovery document advertises RS256 and `/oauth2/v3/certs` returns the RSA public key used to verify issued ID tokens.
 
 `/oauth2/v1/certs` returns X.509 certificates, matching [Google's PEM endpoint](https://www.googleapis.com/oauth2/v1/certs). Each certificate contains the same public key published under its key ID in `/oauth2/v3/certs`. Both endpoints are public and return `Cache-Control`, `Date`, and `Expires` headers with a one-hour cache lifetime. The emulator uses a locally generated, self-signed certificate valid for one year and a signing key fixed for the process lifetime; Google's periodic key rotation is not emulated.
