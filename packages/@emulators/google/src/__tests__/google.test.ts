@@ -925,6 +925,7 @@ describe("Google plugin integration", () => {
       redirect_uri: "http://localhost:3000/api/auth/callback/google",
       scope: "openid email profile https://www.googleapis.com/auth/calendar.readonly",
       client_id: "emu_google_client_id",
+      nonce: "authorization-nonce",
     });
 
     expect(authorizeRes.status).toBe(302);
@@ -965,6 +966,7 @@ describe("Google plugin integration", () => {
     });
     expect(payload.email).toBe("testuser@example.com");
     expect(payload.hd).toBe("example.com");
+    expect(payload.nonce).toBe("authorization-nonce");
 
     const certificatesRes = await app.request(`${base}/oauth2/v1/certs`);
     expect(certificatesRes.status).toBe(200);
@@ -989,12 +991,24 @@ describe("Google plugin integration", () => {
 
     expect(refreshRes.status).toBe(200);
     const refreshBody = (await refreshRes.json()) as {
+      id_token: string;
       access_token: string;
       scope: string;
     };
     expect(refreshBody.access_token).toMatch(/^google_/);
     expect(refreshBody.access_token).not.toBe(tokenBody.access_token);
     expect(refreshBody.scope).toBe(tokenBody.scope);
+    const { payload: refreshedIdentity } = await jwtVerify(
+      refreshBody.id_token,
+      await importJWK(jwksBody.keys[0], "RS256"),
+      { issuer: base, audience: "emu_google_client_id" },
+    );
+    expect(refreshedIdentity).toMatchObject({
+      sub: payload.sub,
+      email: "testuser@example.com",
+      hd: "example.com",
+    });
+    expect(refreshedIdentity.nonce).toBeUndefined();
   });
 
   it("derives, overrides, and omits the hd claim based on user config", async () => {
