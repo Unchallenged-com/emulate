@@ -423,6 +423,7 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
       token = params.get("token") ?? "";
     }
 
+    token ||= c.req.query("token") ?? "";
     if (token) {
       revokeToken(store, tokenMap, token);
     }
