@@ -97,7 +97,8 @@ Google Calendar discovery:
   GET /discovery/v1/apis/calendar/v3/rest returns the public discovery document for the emulated Calendar v3 surface.
 
 Google OIDC:
-  Discovery advertises RS256 ID tokens, and GET /oauth2/v3/certs returns the RSA public key used to verify them.
+  Discovery advertises RS256 ID tokens. GET /oauth2/v3/certs returns JWKS; GET /oauth2/v1/certs returns matching PEM X.509 certificates.
+  Both certificate endpoints advertise a one-hour cache lifetime. Signing keys do not rotate during the process lifetime.
   Set google.strict_scopes: true in seed config to validate issued access tokens, expiry, revocation, and method scopes.
   Strict mode returns Google-style 401/403 errors and limits userinfo claims; bearer-token defaults remain permissive.
 
