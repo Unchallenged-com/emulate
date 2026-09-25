@@ -986,10 +986,13 @@ Google ID tokens are RS256-signed JWTs. The discovery document advertises RS256,
 
 Google authentication is permissive by default for local bearer-token workflows. Set `google.strict_scopes: true` in seed config to require emulator-issued, unexpired access tokens on Gmail, Calendar, Drive, and userinfo routes. Invalid credentials return `401 UNAUTHENTICATED`; missing method scopes return `403` with `insufficientPermissions`. Strict mode distinguishes read, write, send, settings, and metadata scopes, and userinfo includes only granted identity claims. Revoking an access or refresh token invalidates the linked access and refresh credentials. Discovery, signing keys, and the sign-in page remain public. This mode checks method scopes; resource-specific grants such as `drive.file` and Gmail add-on scopes are not modeled.
 
+`/oauth2/v1/certs` returns X.509 certificates, matching [Google's PEM endpoint](https://www.googleapis.com/oauth2/v1/certs). Each certificate contains the same public key published under its key ID in `/oauth2/v3/certs`. Both endpoints are public and return `Cache-Control`, `Date`, and `Expires` headers with a one-hour cache lifetime. The emulator uses a locally generated, self-signed certificate valid for one year and a signing key fixed for the process lifetime; Google's periodic key rotation is not emulated.
+
 - `GET /o/oauth2/v2/auth` - authorization endpoint
 - `POST /oauth2/token` - token exchange
 - `GET /oauth2/v2/userinfo` - get user info
 - `GET /.well-known/openid-configuration` - OIDC discovery document
+- `GET /oauth2/v1/certs` — JSON map of key IDs to PEM-encoded X.509 signing certificates
 - `GET /oauth2/v3/certs` - JSON Web Key Set (JWKS) with the RSA public key for ID token verification
 - `GET /gmail/v1/users/:userId/messages` - list messages with `q`, `labelIds`, `maxResults`, and `pageToken`
 - `GET /gmail/v1/users/:userId/messages/:id` - fetch a Gmail-style message payload in `full`, `metadata`, `minimal`, or `raw` formats
@@ -1682,7 +1685,7 @@ Tokens are configured in the seed config and map to users. Pass them as `Authori
 
 **GitHub**: Public repo endpoints work without auth. Private repos and write operations require a valid token. A private repository the caller cannot see returns `404 Not Found`, as on GitHub. Set `github.strict_scopes: true` in seed config to reject tokens the emulator did not issue: a token that does not come from seed config, server options, an OAuth exchange, or an installation token request returns `401 Bad credentials` instead of acting as the default user. Pagination uses `page`/`per_page` with `Link` headers.
 
-**Google**: Standard OAuth 2.0 authorization code flow with RS256-signed OIDC ID tokens. The discovery document advertises RS256 and `/oauth2/v3/certs` returns the RSA public key used to verify issued tokens. Configure clients in the seed config.
+**Google**: Standard OAuth 2.0 authorization code flow with RS256-signed OIDC ID tokens. The discovery document advertises RS256. `/oauth2/v3/certs` returns the signing public key as JWKS, and `/oauth2/v1/certs` returns its PEM-encoded X.509 certificate. Configure clients in the seed config.
 
 **Slack**: All Web API endpoints require `Authorization: Bearer <token>`. Seeded OAuth apps create local installation records, and OAuth v2 flow with user picker UI creates scoped bot tokens. Optional strict scope mode returns `missing_scope` when a token lacks a required method scope.
 

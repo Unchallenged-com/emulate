@@ -11,11 +11,14 @@ OAuth 2.0, OpenID Connect, and mutable Google Workspace-style surfaces for local
 - `POST /oauth2/token` - token exchange
 - `GET /oauth2/v2/userinfo` - get user info
 - `GET /.well-known/openid-configuration` - OIDC discovery document
+- `GET /oauth2/v1/certs` — JSON map of key IDs to PEM-encoded X.509 signing certificates
 - `GET /oauth2/v3/certs` - JSON Web Key Set (JWKS) with the RSA public key for ID token verification
 
 Google ID tokens are RS256-signed JWTs. The discovery document advertises RS256, and the JWKS endpoint returns the matching RSA public key used to verify issued tokens.
 
 Google authentication is permissive by default for local bearer-token workflows. Set `google.strict_scopes: true` in seed config to require emulator-issued, unexpired access tokens on Gmail, Calendar, Drive, and userinfo routes. Invalid credentials return `401 UNAUTHENTICATED`; missing method scopes return `403` with `insufficientPermissions`. Strict mode distinguishes read, write, send, settings, and metadata scopes, and userinfo includes only granted identity claims. Revoking an access or refresh token invalidates the linked access and refresh credentials. Discovery, signing keys, and the sign-in page remain public. This mode checks method scopes; resource-specific grants such as `drive.file` and Gmail add-on scopes are not modeled.
+
+`/oauth2/v1/certs` returns X.509 certificates, matching [Google's PEM endpoint](https://www.googleapis.com/oauth2/v1/certs). Each certificate contains the same public key published under its key ID in `/oauth2/v3/certs`. Both endpoints are public and return `Cache-Control`, `Date`, and `Expires` headers with a one-hour cache lifetime. The emulator uses a locally generated, self-signed certificate valid for one year and a signing key fixed for the process lifetime; Google's periodic key rotation is not emulated.
 
 ## Gmail
 
