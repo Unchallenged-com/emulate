@@ -71,6 +71,8 @@ GitHub API coverage:
   A private repository the caller cannot see returns 404, as on GitHub.
   DELETE /applications/:client_id/token and /grant revoke an OAuth app's token or grant.
   Set github.strict_scopes: true to reject tokens the emulator did not issue with 401 Bad credentials.
+  Organization SAML SSO: seed github.orgs[].saml with sign_on_url, issuer, and public_certificate.
+  GET /orgs/:org/saml/metadata, GET /orgs/:org/sso, and POST /orgs/:org/saml/consume act as the service provider.
 
 Linear API coverage:
   Issue queries and mutations include numeric priority and derived priorityLabel fields.
