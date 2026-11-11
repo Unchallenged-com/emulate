@@ -47,7 +47,7 @@ The assertion uses these `settings.signOn` fields:
 | `authnContextClassRef` | Defaults to `urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport`.                                                                       |
 | `attributeStatements`  | Attributes added to the assertion in an `AttributeStatement`, before it is signed. See below.                                                          |
 
-The assertion is valid from 5 minutes before to 5 minutes after it is issued, and has no `SessionNotOnOrAfter`. One signing key and self-signed certificate is generated per emulator instance and shared by every SAML app; the metadata publishes that certificate.
+The assertion is valid from 5 minutes before to 5 minutes after it is issued, and has no `SessionNotOnOrAfter`. One signing key and self-signed certificate is generated once per process and shared by every SAML app; the metadata publishes that certificate.
 
 Each entry of `attributeStatements` becomes one `Attribute` whose `Name` is `name` and whose `NameFormat` is `namespace`: `urn:oasis:names:tc:SAML:2.0:attrname-format:basic` (the default), `urn:oasis:names:tc:SAML:2.0:attrname-format:uri` or `urn:oasis:names:tc:SAML:2.0:attrname-format:unspecified`. Every value is an `xs:string`.
 
