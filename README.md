@@ -725,15 +725,23 @@ github:
           -----BEGIN CERTIFICATE-----
           MIIC...
           -----END CERTIFICATE-----
+        enforced: true
+        authorized_tokens:
+          - ghp_example_authorized_token
 ```
 
-An organization with `saml` is a SAML service provider, as an organization with SAML single sign-on on GitHub Enterprise Cloud. `sign_on_url` is the identity provider's single sign-on URL, `issuer` (optional) must match the `Issuer` of the response, and `public_certificate` verifies its signature. `signature_method` and `digest_method` accept `RSA-SHA256` and `SHA256`, their defaults. `enforced` is stored but does not restrict tokens yet.
+An organization with `saml` is a SAML service provider, as an organization with SAML single sign-on on GitHub Enterprise Cloud. `sign_on_url` is the identity provider's single sign-on URL, `issuer` (optional) must match the `Issuer` of the response, and `public_certificate` verifies its signature. `signature_method` and `digest_method` accept `RSA-SHA256` and `SHA256`, their defaults. `enforced` requires SAML SSO authorization for every member's tokens, and `authorized_tokens` lists tokens that are already authorized.
 
 - `GET /orgs/:org/saml/metadata` returns the service provider metadata: entity ID `BASE_URL/orgs/:org`, assertion consumer service `BASE_URL/orgs/:org/saml/consume` with the HTTP-POST binding.
 - `GET /orgs/:org/sso` asks the browser to sign in to a personal account with the user picker when it has no session, then posts a SAML `AuthnRequest` to `sign_on_url`. A local `return_to` path is sent as `RelayState`.
 - `POST /orgs/:org/saml/consume` accepts a response with a single assertion, signed on the assertion or on the response with `public_certificate`, that answers a request from the same browser, with `Recipient` set to the consumer URL, `Audience` set to the entity ID, a current `NotBefore` and `NotOnOrAfter` window, and `Destination` set to the consumer URL when the response is signed. Responses without `InResponseTo` are refused, so identity provider dashboards should link to `/orgs/:org/sso`.
 
 The first sign-in links the `NameID` to the personal account, and a `NameID` linked to another account is refused. When a valid response carries a different `NameID` for an account that is already linked, a warning says that the account is about to be relinked, and the account is relinked and signed in only after the user continues with `POST /orgs/:org/saml/relink`. The SAML session of the browser lasts 24 hours, or until the assertion's `SessionNotOnOrAfter`. Then the browser is redirected to `RelayState` or `/orgs/:org`. A refused response returns an HTML error page with status 403, or 400 when it is not a SAML response.
+
+A member's personal access token or OAuth token reaches the organization's private repositories, and the organization endpoints that need membership, only once it is authorized for SAML SSO. This applies when the organization enforces SAML, or when the member has a linked identity there. An unauthorized token gets `403` with `Resource protected by organization SAML enforcement. You must grant your Personal Access token access to this organization.` ("your OAuth token" for an OAuth token) and `X-GitHub-SSO: required; url=BASE_URL/login/sso?return_to=...`. Searches leave out those organizations' results and name them in `X-GitHub-SSO: partial-results; organizations=ID,...`. Installation tokens, outside collaborators, and organizations without `saml` are not affected.
+
+- `GET /login/sso?return_to=...` signs the browser in to the token's personal account, then continues to `/orgs/:org/sso?authorization_request=...`, which goes through the identity provider when the browser has no SAML session for the organization, then asks the user to authorize the token. `POST /orgs/:org/sso` records the authorization. The URL expires after one hour.
+- An OAuth token is authorized for the organizations where the browser has an active SAML session when the user authorizes the app.
 
 ### Slack OAuth Apps
 

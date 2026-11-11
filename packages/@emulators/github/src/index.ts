@@ -36,6 +36,7 @@ import { appsRoutes } from "./routes/apps.js";
 import { installationTokenRoutes } from "./routes/installation-tokens.js";
 import { samlRoutes } from "./routes/saml.js";
 import { seedOrgSamlConfig, type OrgSamlSeedConfig } from "./saml.js";
+import { samlCredentialMiddleware, seedAuthorizedTokens } from "./saml-credentials.js";
 import { findOrCreateBlob, findOrCreateCommit, findOrCreateTree } from "./git-helpers.js";
 
 export { getGitHubStore, type GitHubStore } from "./store.js";
@@ -361,7 +362,10 @@ export function seedFromConfig(store: Store, baseUrl: string, config: GitHubSeed
       const org = gh.orgs.findOneBy("login", orgConfig.login);
       if (!org) continue;
 
-      if (orgConfig.saml) seedOrgSamlConfig(store, org, orgConfig.saml);
+      if (orgConfig.saml) {
+        seedOrgSamlConfig(store, org, orgConfig.saml);
+        seedAuthorizedTokens(store, org, orgConfig.saml.authorized_tokens ?? []);
+      }
 
       const membersTeam = getOrCreateMembersTeam(gh, org);
       for (const memberConfig of orgConfig.members ?? []) {
@@ -661,6 +665,9 @@ export const githubPlugin: ServicePlugin = {
       await originalDispatch(event, action, enrichedPayload, owner, repo);
       await deliverToAppWebhookUrls(gh, event, action, payload, owner, repo);
     };
+
+    // Registered before the routes: SAML SSO authorization of user tokens for organizations.
+    app.use("*", samlCredentialMiddleware(store, baseUrl));
 
     const ctx: RouteContext = { app, store, webhooks, baseUrl, tokenMap };
     usersRoutes(ctx);

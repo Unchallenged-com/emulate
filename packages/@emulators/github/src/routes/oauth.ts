@@ -16,6 +16,8 @@ import {
 } from "@emulators/core";
 import { getGitHubStore } from "../store.js";
 import { formatUser, formatUserFull } from "../helpers.js";
+import { getActiveSamlSession } from "../saml.js";
+import { authorizeCredential, credentialHash } from "../saml-credentials.js";
 
 type PendingCode = {
   login: string;
@@ -23,6 +25,8 @@ type PendingCode = {
   redirectUri: string;
   clientId: string;
   created_at: number;
+  /** Organizations with an active SAML session in the browser when the user authorized the app. */
+  ssoOrgIds?: number[];
 };
 
 const PENDING_CODE_TTL_MS = 10 * 60 * 1000;
@@ -178,6 +182,22 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
     const state = String(body.state ?? "");
     const client_id = String(body.client_id ?? "");
 
+    // Keep the browser session (and its SAML sessions) when the same account signs in again.
+    const existingSession = getBrowserSession(store, c);
+    const sessionId =
+      existingSession && existingSession.login === login
+        ? existingSession.sessionId
+        : randomBytes(24).toString("base64url");
+
+    const user = gh.users.findOneBy("login", login);
+    const ssoOrgIds =
+      existingSession && existingSession.login === login && user
+        ? gh.orgSamlConfigs
+            .all()
+            .map((config) => config.org_id)
+            .filter((orgId) => getActiveSamlSession(store, sessionId, orgId) !== null)
+        : [];
+
     const code = randomBytes(20).toString("hex");
     getPendingCodes(store).set(code, {
       login,
@@ -185,6 +205,7 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
       redirectUri: redirect_uri,
       clientId: client_id,
       created_at: Date.now(),
+      ssoOrgIds,
     });
 
     debug(
@@ -192,7 +213,6 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
       `[OAuth callback] generated code: ${code.slice(0, 8)}... for login=${login}, pendingCodes size: ${getPendingCodes(store).size}`,
     );
 
-    const sessionId = randomBytes(24).toString("base64url");
     getSessionMap(store).set(sessionId, login);
     c.header("Set-Cookie", `_emu_session=${sessionId}; Path=/; HttpOnly; SameSite=Lax`);
 
@@ -294,6 +314,12 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
 
     if (tokenMap) {
       tokenMap.set(token, { login: user.login, id: user.id, scopes });
+    }
+
+    // An OAuth token reaches an organization that uses SAML SSO only if the user had an active SAML
+    // session for it when authorizing the app.
+    for (const orgId of pending.ssoOrgIds ?? []) {
+      authorizeCredential(store, orgId, credentialHash(token), "OAuth token");
     }
 
     const oauthApp = gh.oauthApps.findOneBy("client_id", pending.clientId);

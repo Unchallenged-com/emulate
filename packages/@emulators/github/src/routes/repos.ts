@@ -4,6 +4,7 @@ import { getGitHubStore } from "../store.js";
 import {
   assertAuthenticatedUser,
   assertRepoRead,
+  assertRepoOrgSso,
   hasRepoAdmin,
   isOrgMember,
   notFoundResponse,
@@ -14,6 +15,7 @@ import type { GitHubBranch, GitHubCollaborator, GitHubRef, GitHubRepo, GitHubTag
 import type { Collection, Entity } from "@emulators/core";
 import { formatRepo, formatUser, generateNodeId, lookupOwner, lookupRepo, timestamp } from "../helpers.js";
 import { findOrCreateBlob, findOrCreateCommit, findOrCreateTree } from "../git-helpers.js";
+import { assertSsoAuthorized } from "../saml-credentials.js";
 
 const LICENSE_TEMPLATES: Record<string, { key: string; name: string; spdx_id: string }> = {
   mit: { key: "mit", name: "MIT License", spdx_id: "MIT" },
@@ -350,6 +352,7 @@ export function reposRoutes({ app, store, webhooks, baseUrl }: RouteContext): vo
     if (!isOrgMember(gh, user.id, org.id)) {
       throw forbidden();
     }
+    assertSsoAuthorized(gh, authUser, org.id);
 
     const body = await parseJsonBody(c);
 
@@ -399,6 +402,7 @@ export function reposRoutes({ app, store, webhooks, baseUrl }: RouteContext): vo
     assertRepoRead(gh, c.get("authUser"), repo);
     const authUser = c.get("authUser");
     const user = assertAuthenticatedUser(gh, authUser);
+    assertRepoOrgSso(gh, authUser, repo);
     if (!hasRepoAdmin(gh, user, repo)) throw forbidden();
 
     const body = await parseJsonBody(c);
@@ -494,6 +498,7 @@ export function reposRoutes({ app, store, webhooks, baseUrl }: RouteContext): vo
     if (!repo) throw notFoundResponse();
     const authUser = c.get("authUser");
     const user = assertAuthenticatedUser(gh, authUser);
+    assertRepoOrgSso(gh, authUser, repo);
     if (!hasRepoAdmin(gh, user, repo)) throw forbidden();
 
     webhooks.dispatch(
@@ -524,6 +529,7 @@ export function reposRoutes({ app, store, webhooks, baseUrl }: RouteContext): vo
     if (!repo) throw notFoundResponse();
     const authUser = c.get("authUser");
     const user = assertAuthenticatedUser(gh, authUser);
+    assertRepoOrgSso(gh, authUser, repo);
     if (!hasRepoAdmin(gh, user, repo)) throw forbidden();
 
     const body = (await parseJsonBody(c)) as { names?: unknown };
@@ -620,6 +626,7 @@ export function reposRoutes({ app, store, webhooks, baseUrl }: RouteContext): vo
       const org = gh.orgs.findOneBy("login", body.organization.trim());
       if (!org) throw notFoundResponse();
       if (!isOrgMember(gh, user.id, org.id)) throw forbidden();
+      assertSsoAuthorized(gh, authUser, org.id);
       ownerType = "Organization";
       ownerId = org.id;
       fullName = `${org.login}/${forkName}`;
@@ -731,6 +738,7 @@ export function reposRoutes({ app, store, webhooks, baseUrl }: RouteContext): vo
     if (!repo) throw notFoundResponse();
     const authUser = c.get("authUser");
     const actor = assertAuthenticatedUser(gh, authUser);
+    assertRepoOrgSso(gh, authUser, repo);
     if (!hasRepoAdmin(gh, actor, repo)) throw forbidden();
 
     const target = gh.users.findOneBy("login", username);
@@ -761,6 +769,7 @@ export function reposRoutes({ app, store, webhooks, baseUrl }: RouteContext): vo
     if (!repo) throw notFoundResponse();
     const authUser = c.get("authUser");
     const actor = assertAuthenticatedUser(gh, authUser);
+    assertRepoOrgSso(gh, authUser, repo);
     if (!hasRepoAdmin(gh, actor, repo)) throw forbidden();
 
     const target = gh.users.findOneBy("login", username);
@@ -829,6 +838,7 @@ export function reposRoutes({ app, store, webhooks, baseUrl }: RouteContext): vo
     if (!repo) throw notFoundResponse();
     const authUser = c.get("authUser");
     const actor = assertAuthenticatedUser(gh, authUser);
+    assertRepoOrgSso(gh, authUser, repo);
     if (!hasRepoAdmin(gh, actor, repo)) throw forbidden();
 
     const body = (await parseJsonBody(c)) as { new_owner?: unknown };
