@@ -1,4 +1,5 @@
 import { SignedXml } from "xml-crypto";
+import type { SamlAttribute } from "./saml-attributes.js";
 import { SAML_BINDINGS, SAML_NAMEID_FORMATS, SAML_NS } from "./saml-constants.js";
 
 export function buildMetadataXml(entityId: string, ssoUrl: string, certBase64: string): string {
@@ -34,6 +35,24 @@ export interface SamlResponseParams {
   notBefore: string;
   notOnOrAfter: string;
   authnContextClassRef: string;
+  attributes: SamlAttribute[];
+}
+
+// Okta's SAML assertion inline hook describes each attribute value with its `NameFormat` and `xsi:type` (`xs:string`).
+function buildAttributeStatement(attributes: SamlAttribute[]): string {
+  if (attributes.length === 0) return "";
+  const body = attributes
+    .map((attribute) => {
+      const values = attribute.values
+        .map(
+          (value) =>
+            `<saml2:AttributeValue xmlns:xs="${SAML_NS.XML_SCHEMA}" xmlns:xsi="${SAML_NS.XML_SCHEMA_INSTANCE}" xsi:type="xs:string">${escapeXml(value)}</saml2:AttributeValue>`,
+        )
+        .join("");
+      return `<saml2:Attribute Name="${escapeXml(attribute.name)}" NameFormat="${escapeXml(attribute.nameFormat)}">${values}</saml2:Attribute>`;
+    })
+    .join("");
+  return `<saml2:AttributeStatement>${body}</saml2:AttributeStatement>`;
 }
 
 export function buildSamlResponse(params: SamlResponseParams): string {
@@ -51,6 +70,7 @@ export function buildSamlResponse(params: SamlResponseParams): string {
     notBefore,
     notOnOrAfter,
     authnContextClassRef,
+    attributes,
   } = params;
 
   const inResponseToAttr = inResponseTo ? ` InResponseTo="${escapeXml(inResponseTo)}"` : "";
@@ -58,7 +78,7 @@ export function buildSamlResponse(params: SamlResponseParams): string {
     ? `<saml2:AudienceRestriction><saml2:Audience>${escapeXml(audience)}</saml2:Audience></saml2:AudienceRestriction>`
     : "";
 
-  return `<saml2p:Response xmlns:saml2p="${SAML_NS.PROTOCOL}" Destination="${escapeXml(destination)}" ID="${escapeXml(responseId)}"${inResponseToAttr} IssueInstant="${escapeXml(issueInstant)}" Version="2.0"><saml2:Issuer xmlns:saml2="${SAML_NS.ASSERTION}">${escapeXml(issuer)}</saml2:Issuer><saml2p:Status><saml2p:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></saml2p:Status><saml2:Assertion xmlns:saml2="${SAML_NS.ASSERTION}" ID="${escapeXml(assertionId)}" IssueInstant="${escapeXml(issueInstant)}" Version="2.0"><saml2:Issuer>${escapeXml(issuer)}</saml2:Issuer><saml2:Subject><saml2:NameID Format="${escapeXml(nameIdFormat)}">${escapeXml(nameId)}</saml2:NameID><saml2:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer"><saml2:SubjectConfirmationData${inResponseToAttr} NotOnOrAfter="${escapeXml(notOnOrAfter)}" Recipient="${escapeXml(recipient)}"/></saml2:SubjectConfirmation></saml2:Subject><saml2:Conditions NotBefore="${escapeXml(notBefore)}" NotOnOrAfter="${escapeXml(notOnOrAfter)}">${audienceRestriction}</saml2:Conditions><saml2:AuthnStatement AuthnInstant="${escapeXml(issueInstant)}" SessionIndex="${escapeXml(assertionId)}"><saml2:AuthnContext><saml2:AuthnContextClassRef>${escapeXml(authnContextClassRef)}</saml2:AuthnContextClassRef></saml2:AuthnContext></saml2:AuthnStatement></saml2:Assertion></saml2p:Response>`;
+  return `<saml2p:Response xmlns:saml2p="${SAML_NS.PROTOCOL}" Destination="${escapeXml(destination)}" ID="${escapeXml(responseId)}"${inResponseToAttr} IssueInstant="${escapeXml(issueInstant)}" Version="2.0"><saml2:Issuer xmlns:saml2="${SAML_NS.ASSERTION}">${escapeXml(issuer)}</saml2:Issuer><saml2p:Status><saml2p:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></saml2p:Status><saml2:Assertion xmlns:saml2="${SAML_NS.ASSERTION}" ID="${escapeXml(assertionId)}" IssueInstant="${escapeXml(issueInstant)}" Version="2.0"><saml2:Issuer>${escapeXml(issuer)}</saml2:Issuer><saml2:Subject><saml2:NameID Format="${escapeXml(nameIdFormat)}">${escapeXml(nameId)}</saml2:NameID><saml2:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer"><saml2:SubjectConfirmationData${inResponseToAttr} NotOnOrAfter="${escapeXml(notOnOrAfter)}" Recipient="${escapeXml(recipient)}"/></saml2:SubjectConfirmation></saml2:Subject><saml2:Conditions NotBefore="${escapeXml(notBefore)}" NotOnOrAfter="${escapeXml(notOnOrAfter)}">${audienceRestriction}</saml2:Conditions><saml2:AuthnStatement AuthnInstant="${escapeXml(issueInstant)}" SessionIndex="${escapeXml(assertionId)}"><saml2:AuthnContext><saml2:AuthnContextClassRef>${escapeXml(authnContextClassRef)}</saml2:AuthnContextClassRef></saml2:AuthnContext></saml2:AuthnStatement>${buildAttributeStatement(attributes)}</saml2:Assertion></saml2p:Response>`;
 }
 
 export interface SamlSigningOptions {

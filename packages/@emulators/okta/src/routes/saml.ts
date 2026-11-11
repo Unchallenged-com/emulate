@@ -15,6 +15,7 @@ import {
 import type { OktaApp } from "../entities.js";
 import { SAML_2_0_SIGN_ON_MODE, userDisplayName } from "../helpers.js";
 import { findAppByRef, findUserByRef, oktaError, requireManagementAuth } from "../route-helpers.js";
+import { resolveAttributeStatements } from "../saml-attributes.js";
 import {
   SAML_AUTHN_CONTEXT_PASSWORD_PROTECTED_TRANSPORT,
   SAML_DIGEST_ALGORITHMS,
@@ -43,6 +44,7 @@ type SamlSignOnSettings = {
   signatureAlgorithm: string;
   digestAlgorithm: string;
   authnContextClassRef: string;
+  attributeStatements: unknown;
 };
 
 function str(value: unknown): string {
@@ -71,6 +73,7 @@ function resolveSignOnSettings(app: OktaApp): SamlSignOnSettings {
     signatureAlgorithm: SAML_SIGNATURE_ALGORITHMS[signatureAlgorithm],
     digestAlgorithm: SAML_DIGEST_ALGORITHMS[digestAlgorithm],
     authnContextClassRef: str(signOn.authnContextClassRef) || SAML_AUTHN_CONTEXT_PASSWORD_PROTECTED_TRANSPORT,
+    attributeStatements: signOn.attributeStatements,
   };
 }
 
@@ -240,6 +243,11 @@ export function samlRoutes({ app, store, baseUrl, tokenMap }: RouteContext): voi
       );
     }
 
+    const groups = oktaStore.groupMemberships
+      .findBy("user_okta_id", user.okta_id)
+      .map((membership) => oktaStore.groups.findOneBy("okta_id", membership.group_okta_id))
+      .filter((group): group is NonNullable<typeof group> => Boolean(group));
+
     const now = Date.now();
     const assertionId = `id${randomBytes(16).toString("hex")}`;
     let xml = buildSamlResponse({
@@ -256,6 +264,7 @@ export function samlRoutes({ app, store, baseUrl, tokenMap }: RouteContext): voi
       notBefore: new Date(now - ASSERTION_VALIDITY_MS).toISOString(),
       notOnOrAfter: new Date(now + ASSERTION_VALIDITY_MS).toISOString(),
       authnContextClassRef: settings.authnContextClassRef,
+      attributes: resolveAttributeStatements(settings.attributeStatements, user, groups),
     });
 
     const { privateKeyPem, certBase64 } = await getSamlSigningMaterial(store);
