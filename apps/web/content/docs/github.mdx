@@ -111,6 +111,8 @@ A member's personal access token or OAuth token reaches the organization's priva
 - `GET /login/sso?return_to=...` signs the browser in to the token's personal account, then continues to `/orgs/:org/sso?authorization_request=...`, which goes through the identity provider when the browser has no SAML session for the organization, then asks the user to authorize the token. `POST /orgs/:org/sso` records the authorization. The URL expires after one hour.
 - An OAuth token cannot be authorized on that page. Authorizing the app again with `/login/oauth/authorize` while the browser has an active SAML session for the organization issues a token that is authorized for it.
 
+Organization owners manage these authorizations with the credential authorizations API. `GET /orgs/:org/credential-authorizations` lists them with `login`, `credential_id`, `credential_type`, `token_last_eight`, `scopes`, `credential_authorized_at`, `credential_accessed_at`, and `authorized_credential_id`, filtered by `login` and paginated with `per_page` and `page`. `DELETE /orgs/:org/credential-authorizations/:credential_id` removes one (`204`, or `404` for an unknown ID). `POST /orgs/:org/credential-authorizations/revoke-all`, `/revoke-credential-type`, `/:username/revoke`, and `/:username/revoke-credential-type` revoke them at once and return `202`, with a `warning` when the request's own token is revoked. A revoked token gets the `403` above again. Token scopes (`read:org`, `admin:org`) are not checked.
+
 ## Users
 
 - `GET /user` - authenticated user

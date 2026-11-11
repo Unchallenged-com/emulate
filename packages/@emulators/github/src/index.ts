@@ -36,6 +36,7 @@ import { oauthRoutes } from "./routes/oauth.js";
 import { appsRoutes } from "./routes/apps.js";
 import { installationTokenRoutes } from "./routes/installation-tokens.js";
 import { samlRoutes } from "./routes/saml.js";
+import { credentialAuthorizationsRoutes } from "./routes/credential-authorizations.js";
 import { seedOrgSamlConfig, type OrgSamlSeedConfig } from "./saml.js";
 import { samlCredentialMiddleware, seedAuthorizedTokens } from "./saml-credentials.js";
 import { findOrCreateBlob, findOrCreateCommit, findOrCreateTree } from "./git-helpers.js";
@@ -703,6 +704,7 @@ export const githubPlugin: ServicePlugin = {
     labelsAndMilestonesRoutes(ctx);
     branchesAndGitRoutes(ctx);
     orgsAndTeamsRoutes(ctx);
+    credentialAuthorizationsRoutes(ctx);
     releasesRoutes(ctx);
     webhooksRoutes(ctx);
     searchRoutes(ctx);

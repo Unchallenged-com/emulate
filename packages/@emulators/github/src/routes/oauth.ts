@@ -17,7 +17,7 @@ import {
 import { getGitHubStore } from "../store.js";
 import { formatUser, formatUserFull } from "../helpers.js";
 import { getActiveSamlSession } from "../saml.js";
-import { authorizeCredential, credentialHash } from "../saml-credentials.js";
+import { authorizeCredential, describeCredential } from "../saml-credentials.js";
 
 type PendingCode = {
   login: string;
@@ -319,7 +319,7 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
     // An OAuth token reaches an organization that uses SAML SSO only if the user had an active SAML
     // session for it when authorizing the app.
     for (const orgId of pending.ssoOrgIds ?? []) {
-      authorizeCredential(store, orgId, credentialHash(token), "OAuth token");
+      authorizeCredential(store, orgId, describeCredential(token, user.login, scopes));
     }
 
     const oauthApp = gh.oauthApps.findOneBy("client_id", pending.clientId);
