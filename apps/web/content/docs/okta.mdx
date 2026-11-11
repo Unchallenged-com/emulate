@@ -56,7 +56,7 @@ Each entry of `attributeStatements` becomes one `Attribute` whose `Name` is `nam
 
 An attribute left without any value is not sent, and the assertion has no `AttributeStatement` when no attribute is left.
 
-Okta refuses to sign in a user who is not `ACTIVE` (status 400), and shows a user who is not assigned to the app the "App Not Assigned" page (status 403); neither gets a SAML response. Creating or updating a SAML app with both `responseSigned` and `assertionSigned` set to `false` returns `400` with `E0000001`, as Okta requires at least one of them; a seed config with such an app fails to load. Assign users with `app_assignments` in the seed config or `PUT /api/v1/apps/:appId/users/:userId`.
+Okta refuses to sign in a user who is not `ACTIVE` (status 400), and shows a user who is not assigned to the app the "App Not Assigned" page (status 403); neither gets a SAML response. A deactivated SAML app accepts no sign-in: its SSO URL and sign-in callback answer `404`, as for an unknown app, since Okta does not document the response. Creating or updating a SAML app with both `responseSigned` and `assertionSigned` set to `false` returns `400` with `E0000001`, as Okta requires at least one of them; a seed config with such an app fails to load. Assign users with `app_assignments` in the seed config or `PUT /api/v1/apps/:appId/users/:userId`.
 
 ```yaml
 okta:
