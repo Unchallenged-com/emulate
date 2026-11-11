@@ -22,6 +22,8 @@ export interface OrgSamlSeedConfig {
   signature_method?: "RSA-SHA256";
   digest_method?: "SHA256";
   enforced?: boolean;
+  /** Tokens already authorized for the organization's SAML SSO. */
+  authorized_tokens?: string[];
 }
 
 interface PendingAuthnRequest {

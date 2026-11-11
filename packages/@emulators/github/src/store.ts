@@ -38,6 +38,7 @@ import type {
   GitHubOAuthGrant,
   GitHubOrgSamlConfig,
   GitHubSamlIdentity,
+  GitHubCredentialAuthorization,
 } from "./entities.js";
 
 export interface GitHubStore {
@@ -79,6 +80,7 @@ export interface GitHubStore {
   oauthGrants: Collection<GitHubOAuthGrant>;
   orgSamlConfigs: Collection<GitHubOrgSamlConfig>;
   samlIdentities: Collection<GitHubSamlIdentity>;
+  credentialAuthorizations: Collection<GitHubCredentialAuthorization>;
 }
 
 export function getGitHubStore(store: Store): GitHubStore {
@@ -127,5 +129,9 @@ export function getGitHubStore(store: Store): GitHubStore {
     oauthGrants: store.collection<GitHubOAuthGrant>("github.oauth_grants", ["user_id", "client_id"]),
     orgSamlConfigs: store.collection<GitHubOrgSamlConfig>("github.org_saml_configs", ["org_id"]),
     samlIdentities: store.collection<GitHubSamlIdentity>("github.saml_identities", ["org_id", "user_id", "name_id"]),
+    credentialAuthorizations: store.collection<GitHubCredentialAuthorization>("github.credential_authorizations", [
+      "org_id",
+      "credential_hash",
+    ]),
   };
 }

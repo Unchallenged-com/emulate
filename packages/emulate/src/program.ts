@@ -71,6 +71,7 @@ GitHub API coverage:
   Set github.strict_scopes: true in seed config to reject tokens the emulator did not issue with 401 Bad credentials.
   Organization SAML SSO: seed github.orgs[].saml with sign_on_url, issuer, and public_certificate.
   GET /orgs/:org/saml/metadata, GET /orgs/:org/sso, and POST /orgs/:org/saml/consume act as the service provider.
+  With saml.enforced or a linked identity, members' tokens need SAML SSO authorization (403 with X-GitHub-SSO).
 
 Linear API coverage:
   Issue queries and mutations include numeric priority and derived priorityLabel fields.

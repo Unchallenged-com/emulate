@@ -3,6 +3,7 @@ import { ApiError, notFound, unauthorized, forbidden } from "@emulators/core";
 import type { GitHubStore } from "./store.js";
 import type { GitHubRepo, GitHubUser } from "./entities.js";
 import { generateNodeId } from "./helpers.js";
+import { assertSsoAuthorized, noteSsoOmittedOrg, ssoAuthorizationRequired } from "./saml-credentials.js";
 
 export { notFound as notFoundResponse };
 
@@ -71,15 +72,26 @@ export function canAccessRepo(gh: GitHubStore, authUser: AuthUser | undefined, r
   const user = getActorUser(gh, authUser);
   if (!user) return false;
   if (repo.owner_type === "User" && repo.owner_id === user.id) return true;
-  if (repo.owner_type === "Organization" && isOrgMember(gh, user.id, repo.owner_id)) return true;
+  if (repo.owner_type === "Organization" && isOrgMember(gh, user.id, repo.owner_id)) {
+    if (!ssoAuthorizationRequired(gh, authUser, repo.owner_id)) return true;
+    noteSsoOmittedOrg(authUser, repo.owner_id);
+    return false;
+  }
   return Boolean(gh.collaborators.findBy("repo_id", repo.id).find((c) => c.user_id === user.id));
 }
 
+/** Organization membership grants access only to a credential authorized for the organization's SAML SSO. */
+export function assertRepoOrgSso(gh: GitHubStore, authUser: AuthUser | undefined, repo: GitHubRepo): void {
+  if (repo.owner_type === "Organization") assertSsoAuthorized(gh, authUser, repo.owner_id);
+}
+
 // GitHub answers 404, not 401 or 403, to a user or anonymous caller for a private repository they cannot see, so as
-// not to confirm it exists. Installation tokens keep their existing errors.
+// not to confirm it exists; a member whose credential is not authorized for the organization's SAML SSO gets the
+// documented 403 instead. Installation tokens keep their existing errors.
 export function assertRepoRead(gh: GitHubStore, authUser: AuthUser | undefined, repo: GitHubRepo): void {
   if (canAccessRepo(gh, authUser, repo)) return;
   if (authUser?.installation) throw forbidden();
+  assertRepoOrgSso(gh, authUser, repo);
   throw notFound();
 }
 
@@ -117,6 +129,7 @@ export function assertRepoPermission(
   if (!authUser?.installation && !canAccessRepo(gh, authUser, repo)) throw notFound();
   if (!canAccessRepoWithPermission(gh, authUser, repo, accepted, required)) {
     if (!authUser) throw unauthorized();
+    assertRepoOrgSso(gh, authUser, repo);
     throw forbidden();
   }
 }
@@ -189,8 +202,12 @@ export function assertRepoContentsWrite(gh: GitHubStore, authUser: AuthUser | un
     if (repo.archived) throw new ApiError(403, "Repository was archived so is read-only.");
     return installationActor(gh, authUser);
   }
-  if (!canAccessRepo(gh, authUser, repo)) throw notFound();
+  if (!canAccessRepo(gh, authUser, repo)) {
+    assertRepoOrgSso(gh, authUser, repo);
+    throw notFound();
+  }
   const user = assertAuthenticatedUser(gh, authUser);
+  assertRepoOrgSso(gh, authUser, repo);
   if (!hasRepoContentsWrite(gh, user, repo)) throw forbidden();
   if (repo.archived) throw new ApiError(403, "Repository was archived so is read-only.");
   return user;
@@ -309,8 +326,12 @@ export function assertRepoAdmin(gh: GitHubStore, authUser: AuthUser | undefined,
     return assertAuthenticatedActor(gh, authUser);
   }
 
-  if (!canAccessRepo(gh, authUser, repo)) throw notFound();
+  if (!canAccessRepo(gh, authUser, repo)) {
+    assertRepoOrgSso(gh, authUser, repo);
+    throw notFound();
+  }
   const user = assertAuthenticatedUser(gh, authUser);
+  assertRepoOrgSso(gh, authUser, repo);
   if (hasRepoAdmin(gh, user, repo)) return user;
   throw forbidden();
 }
@@ -326,7 +347,10 @@ export function assertRepoWrite(
     return assertAuthenticatedActor(gh, authUser);
   }
 
-  if (!canAccessRepo(gh, authUser, repo)) throw notFound();
+  if (!canAccessRepo(gh, authUser, repo)) {
+    assertRepoOrgSso(gh, authUser, repo);
+    throw notFound();
+  }
   return assertAuthenticatedUser(gh, authUser);
 }
 
