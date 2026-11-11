@@ -662,9 +662,15 @@ importers:
       '@emulators/core':
         specifier: workspace:*
         version: link:../core
+      '@xmldom/xmldom':
+        specifier: ^0.9.12
+        version: 0.9.12
       jose:
         specifier: ^6
         version: 6.2.2
+      xml-crypto:
+        specifier: ^6.4.0
+        version: 6.4.0
     devDependencies:
       tsup:
         specifier: ^8
