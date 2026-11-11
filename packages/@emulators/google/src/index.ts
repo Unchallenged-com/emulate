@@ -24,9 +24,12 @@ import { settingsRoutes } from "./routes/settings.js";
 import { threadRoutes } from "./routes/threads.js";
 import { getGoogleStore } from "./store.js";
 import { googleAuthMiddleware } from "./auth.js";
+import { samlRoutes } from "./routes/saml.js";
+import { seedSsoProfiles, type GoogleSsoProfileSeed } from "./saml.js";
 
 export { getGoogleStore, type GoogleStore } from "./store.js";
 export * from "./entities.js";
+export type { GoogleSsoProfileSeed } from "./saml.js";
 
 export interface GoogleSeedUser {
   email: string;
@@ -138,6 +141,7 @@ export interface GoogleSeedConfig {
   calendars?: GoogleSeedCalendar[];
   calendar_events?: GoogleSeedCalendarEvent[];
   drive_items?: GoogleSeedDriveItem[];
+  sso_profiles?: GoogleSsoProfileSeed[];
 }
 
 function seedDefaults(store: Store, _baseUrl: string): void {
@@ -351,6 +355,10 @@ export function seedFromConfig(store: Store, _baseUrl: string, config: GoogleSee
     }
   }
 
+  if (config.sso_profiles) {
+    seedSsoProfiles(store, config.sso_profiles);
+  }
+
   const fallbackEmail = config.users?.[0]?.email ?? gs.users.all()[0]?.email ?? "testuser@gmail.com";
   ensureSystemLabels(gs, fallbackEmail);
 
@@ -516,6 +524,7 @@ export const googlePlugin: ServicePlugin = {
     const ctx: RouteContext = { app, store, webhooks, baseUrl, tokenMap };
     app.use("*", googleAuthMiddleware(app, store));
     oauthRoutes(ctx);
+    samlRoutes(ctx);
     adminDirectoryRoutes(ctx);
     reportsRoutes(ctx);
     calendarRoutes(ctx);

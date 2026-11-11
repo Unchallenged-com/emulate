@@ -6,6 +6,7 @@ import {
   escapeAttr,
   renderCardPage,
   renderErrorPage,
+  renderFormPostPage,
   renderUserButton,
   matchesRedirectUri,
   constantTimeSecretEqual,
@@ -17,6 +18,7 @@ import { getGoogleStore } from "../store.js";
 import type { GoogleUser } from "../entities.js";
 import { getRefreshTokens, issueAccessToken, revokeToken, tokenGrant } from "../oauth-tokens.js";
 import { recordLoginEvent, recordTokenEvent } from "../reports.js";
+import { createAuthnRequest, getWebSessionUser, ssoProfileForUser } from "../saml.js";
 
 // RSA key pair generated at module load for signing ID tokens.
 const keyPairPromise = generateKeyPair("RS256");
@@ -167,7 +169,9 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
       ? `Sign in to <strong>${escapeHtml(clientName)}</strong> with your Google account.`
       : "Choose a seeded user to continue.";
 
-    const users = gs.users.all();
+    // A browser signed in with SAML single sign-on authorizes as its signed-in user.
+    const signedIn = getWebSessionUser(store, c);
+    const users = signedIn ? [signedIn] : gs.users.all();
     const userButtons = users
       .map((user) => {
         return renderUserButton({
@@ -219,9 +223,27 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
         403,
       );
     }
+
+    // A user assigned to an SSO profile signs in at the profile's identity provider first: Google
+    // sends it an unsigned AuthnRequest with the HTTP POST binding, then returns to this page.
+    const profile = ssoProfileForUser(store, user);
+    if (profile && getWebSessionUser(store, c)?.email !== email) {
+      const params = new URLSearchParams();
+      const fields = { client_id, redirect_uri, scope, state, nonce, code_challenge, code_challenge_method };
+      for (const [name, value] of Object.entries(fields)) if (value) params.set(name, value);
+      const request = createAuthnRequest(store, baseUrl, profile, `/o/oauth2/v2/auth?${params.toString()}`);
+      return c.html(
+        renderFormPostPage(
+          profile.sign_in_page_url,
+          { SAMLRequest: Buffer.from(request.xml, "utf8").toString("base64"), RelayState: request.relayState },
+          SERVICE_LABEL,
+        ),
+      );
+    }
     if (user) gs.users.update(user.id, { last_login_time: new Date().toISOString() });
-    // Signing in on the emulator's page is both the sign-in and the user's consent to the client.
-    recordLoginEvent(c, store, user, "login_success");
+    // Signing in on the emulator's page is both the sign-in and the user's consent to the client. A user with an SSO
+    // profile signed in at the identity provider instead.
+    if (!profile) recordLoginEvent(c, store, user, "login_success");
     recordTokenEvent(c, store, email, "authorize", client_id, scope);
 
     const code = randomBytes(20).toString("hex");
