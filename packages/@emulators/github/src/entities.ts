@@ -548,8 +548,18 @@ export interface GitHubSamlIdentity extends Entity {
   name_id: string;
 }
 
+/** The credential types GitHub's revoke-credential-type endpoints name, for the tokens the emulator issues. */
+export type GitHubCredentialKind = "classic_pat" | "fine_grained_pat" | "oauth_app_token";
+
+/** A credential authorized for an organization's SAML SSO. `id` is the API's `credential_id`. */
 export interface GitHubCredentialAuthorization extends Entity {
   org_id: number;
   credential_hash: string;
-  credential_type: "personal access token" | "OAuth token";
+  credential_kind: GitHubCredentialKind;
+  /** Null for a token seeded as authorized: its login comes from the token map. */
+  login: string | null;
+  token_last_eight: string;
+  scopes: string[] | null;
+  authorized_credential_id: number;
+  credential_accessed_at: string | null;
 }

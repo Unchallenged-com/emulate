@@ -140,7 +140,13 @@ export function samlRoutes({ app, store, baseUrl }: RouteContext): void {
       );
     }
 
-    authorizeCredential(store, org.id, request.credential_hash, "personal access token");
+    authorizeCredential(store, org.id, {
+      hash: request.credential_hash,
+      kind: request.credential_kind,
+      login: request.login,
+      tokenLastEight: request.token_last_eight,
+      scopes: request.scopes,
+    });
     deleteAuthorizationRequest(store, requestId);
     return c.redirect(`/orgs/${org.login}`, 302);
   });

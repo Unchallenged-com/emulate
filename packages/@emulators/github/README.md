@@ -101,6 +101,7 @@ npm install @emulators/github
 - Teams: full CRUD, members, repos
 - Organization SAML SSO: `GET /orgs/:org/saml/metadata`, `GET /orgs/:org/sso`, `POST /orgs/:org/saml/consume`, `POST /orgs/:org/saml/relink` (seed `orgs[].saml`)
 - SAML SSO authorization of tokens: `GET /login/sso`, `POST /orgs/:org/sso`, `X-GitHub-SSO` on refused personal access tokens
+- Credential authorizations: `GET /orgs/:org/credential-authorizations`, `DELETE /orgs/:org/credential-authorizations/:credential_id`, and the `revoke-all`, `revoke-credential-type`, `:username/revoke`, and `:username/revoke-credential-type` revocations
 
 ### Releases
 - Releases: full CRUD, latest, by tag

@@ -27,7 +27,7 @@ function requireAuthUser(c: { get: (k: "authUser") => AuthUser | undefined }): A
   return u;
 }
 
-function requireOrgAdmin(gh: GitHubStore, org: GitHubOrg, auth: AuthUser): void {
+export function requireOrgAdmin(gh: GitHubStore, org: GitHubOrg, auth: AuthUser): void {
   const user = gh.users.findOneBy("login", auth.login);
   if (!user) throw forbidden();
   assertSsoAuthorized(gh, auth, org.id);
