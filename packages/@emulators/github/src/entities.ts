@@ -547,3 +547,9 @@ export interface GitHubSamlIdentity extends Entity {
   user_id: number;
   name_id: string;
 }
+
+export interface GitHubCredentialAuthorization extends Entity {
+  org_id: number;
+  credential_hash: string;
+  credential_type: "personal access token" | "OAuth token";
+}

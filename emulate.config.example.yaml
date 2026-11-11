@@ -26,6 +26,7 @@ github:
       #   sign_on_url: http://localhost:4010/app/my-github/exk1/sso/saml
       #   issuer: http://www.okta.com/exk1
       #   public_certificate: <the identity provider's PEM certificate>
+      #   enforced: true
   repos:
     - owner: octocat
       name: hello-world

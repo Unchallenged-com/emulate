@@ -1,6 +1,7 @@
 import type { RouteContext, AuthUser } from "@emulators/core";
 import { ApiError, parseJsonBody, parsePagination, setLinkHeader, unauthorized, forbidden } from "@emulators/core";
 import { getGitHubStore } from "../store.js";
+import { assertSsoAuthorized } from "../saml-credentials.js";
 import type { GitHubStore } from "../store.js";
 import type { GitHubOrg, GitHubRepo, GitHubTeam, GitHubUser } from "../entities.js";
 import {
@@ -29,6 +30,7 @@ function requireAuthUser(c: { get: (k: "authUser") => AuthUser | undefined }): A
 function requireOrgAdmin(gh: GitHubStore, org: GitHubOrg, auth: AuthUser): void {
   const user = gh.users.findOneBy("login", auth.login);
   if (!user) throw forbidden();
+  assertSsoAuthorized(gh, auth, org.id);
   const role = orgRoleForUser(gh, org.id, user.id);
   if (role !== "admin") throw forbidden();
 }
