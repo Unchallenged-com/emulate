@@ -1,13 +1,13 @@
 import { createHash, randomBytes } from "crypto";
 import { ApiError, type AppEnv, type AuthUser, type Context, type Next, type Store } from "@emulators/core";
 import { getGitHubStore, type GitHubStore } from "./store.js";
-import type { GitHubCredentialAuthorization, GitHubOrg } from "./entities.js";
+import type { GitHubCredentialKind, GitHubOrg } from "./entities.js";
 import { isOrgMember } from "./route-helpers.js";
 
 /** GitHub: the URL in the X-GitHub-SSO header "expires after one hour". */
 export const AUTHORIZATION_REQUEST_TTL_MS = 60 * 60 * 1000;
 
-type CredentialType = GitHubCredentialAuthorization["credential_type"];
+type CredentialType = "personal access token" | "OAuth token";
 
 interface CredentialContext {
   credentialHash: string;
@@ -15,11 +15,23 @@ interface CredentialContext {
   omittedOrgIds: Set<number>;
 }
 
+/** What an authorization records about the credential, from the token itself and its owner. */
+export interface AuthorizedCredential {
+  hash: string;
+  kind: GitHubCredentialKind;
+  login: string | null;
+  tokenLastEight: string;
+  scopes: string[] | null;
+}
+
 /** A request to authorize a personal access token, the only credential the X-GitHub-SSO URL is documented for. */
 export interface CredentialAuthorizationRequest {
   org_id: number;
   login: string;
   credential_hash: string;
+  credential_kind: GitHubCredentialKind;
+  token_last_eight: string;
+  scopes: string[];
   created_at: number;
 }
 
@@ -30,9 +42,22 @@ export function credentialHash(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
-/** GitHub's token formats: OAuth access tokens begin with `gho_`. */
+/**
+ * GitHub's token formats: OAuth access tokens begin with `gho_`, fine-grained personal access tokens
+ * with `github_pat_`. Other user tokens count as classic personal access tokens.
+ */
+export function credentialKindOf(token: string): GitHubCredentialKind {
+  if (token.startsWith("gho_")) return "oauth_app_token";
+  if (token.startsWith("github_pat_")) return "fine_grained_pat";
+  return "classic_pat";
+}
+
 function credentialTypeOf(token: string): CredentialType {
-  return token.startsWith("gho_") ? "OAuth token" : "personal access token";
+  return credentialKindOf(token) === "oauth_app_token" ? "OAuth token" : "personal access token";
+}
+
+export function describeCredential(token: string, login: string | null, scopes: string[] | null): AuthorizedCredential {
+  return { hash: credentialHash(token), kind: credentialKindOf(token), login, tokenLastEight: token.slice(-8), scopes };
 }
 
 export class SamlSsoRequiredError extends ApiError {
@@ -64,9 +89,12 @@ export function ssoAuthorizationRequired(gh: GitHubStore, authUser: AuthUser | u
   if (!user || !isOrgMember(gh, user.id, orgId)) return false;
   const linked = gh.samlIdentities.findBy("org_id", orgId).some((identity) => identity.user_id === user.id);
   if (!config.enforced && !linked) return false;
-  return !gh.credentialAuthorizations
+  const authorization = gh.credentialAuthorizations
     .findBy("org_id", orgId)
-    .some((authorization) => authorization.credential_hash === context.credentialHash);
+    .find((row) => row.credential_hash === context.credentialHash);
+  if (!authorization) return true;
+  gh.credentialAuthorizations.update(authorization.id, { credential_accessed_at: new Date().toISOString() });
+  return false;
 }
 
 export function assertSsoAuthorized(gh: GitHubStore, authUser: AuthUser | undefined, orgId: number): void {
@@ -79,14 +107,41 @@ export function noteSsoOmittedOrg(authUser: AuthUser | undefined, orgId: number)
   if (authUser) credentialContexts.get(authUser)?.omittedOrgIds.add(orgId);
 }
 
-export function authorizeCredential(store: Store, orgId: number, hash: string, type: CredentialType): void {
+/** The ID of the underlying token: the same across every authorization of that token. */
+function authorizedCredentialId(store: Store, hash: string): number {
+  let ids = store.getData<Map<string, number>>("github.saml.authorizedCredentialIds");
+  if (!ids) {
+    ids = new Map();
+    store.setData("github.saml.authorizedCredentialIds", ids);
+  }
+  let id = ids.get(hash);
+  if (id === undefined) {
+    id = ids.size + 1;
+    ids.set(hash, id);
+  }
+  return id;
+}
+
+export function authorizeCredential(store: Store, orgId: number, credential: AuthorizedCredential): void {
   const gh = getGitHubStore(store);
-  const existing = gh.credentialAuthorizations.findBy("org_id", orgId).some((row) => row.credential_hash === hash);
-  if (!existing) gh.credentialAuthorizations.insert({ org_id: orgId, credential_hash: hash, credential_type: type });
+  const existing = gh.credentialAuthorizations
+    .findBy("org_id", orgId)
+    .some((row) => row.credential_hash === credential.hash);
+  if (existing) return;
+  gh.credentialAuthorizations.insert({
+    org_id: orgId,
+    credential_hash: credential.hash,
+    credential_kind: credential.kind,
+    login: credential.login,
+    token_last_eight: credential.tokenLastEight,
+    scopes: credential.scopes,
+    authorized_credential_id: authorizedCredentialId(store, credential.hash),
+    credential_accessed_at: null,
+  });
 }
 
 export function seedAuthorizedTokens(store: Store, org: GitHubOrg, tokens: string[]): void {
-  for (const token of tokens) authorizeCredential(store, org.id, credentialHash(token), credentialTypeOf(token));
+  for (const token of tokens) authorizeCredential(store, org.id, describeCredential(token, null, null));
 }
 
 function getAuthorizationRequests(store: Store): Map<string, CredentialAuthorizationRequest> {
@@ -161,6 +216,9 @@ export function samlCredentialMiddleware(store: Store, baseUrl: string) {
           org_id: org.id,
           login: authUser.login,
           credential_hash: context.credentialHash,
+          credential_kind: credentialKindOf(token),
+          token_last_eight: token.slice(-8),
+          scopes: [...authUser.scopes],
           created_at: Date.now(),
         });
         const returnTo = `/orgs/${org.login}/sso?authorization_request=${id}`;
