@@ -217,12 +217,16 @@ export function buildResponse(options: ResponseOptions = {}): string {
   return signer.getSignedXml();
 }
 
-export function consume(app: Hono, sessionId: string, xml: string, relayState?: string) {
+/** Posts the response as the browser would; `sessionId: null` is a cross-site POST without the session cookie. */
+export function consume(app: Hono, sessionId: string | null, xml: string, relayState?: string) {
   const form = new URLSearchParams({ SAMLResponse: Buffer.from(xml, "utf8").toString("base64") });
   if (relayState !== undefined) form.set("RelayState", relayState);
   return app.request(`${base}/orgs/acme/saml/consume`, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded", Cookie: `_emu_session=${sessionId}` },
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      ...(sessionId === null ? {} : { Cookie: `_emu_session=${sessionId}` }),
+    },
     body: form,
   });
 }

@@ -153,6 +153,21 @@ describe("GitHub organization SAML SSO for personal access tokens", () => {
     expect(((await update.json()) as { message: string }).message).toBe(PAT_MESSAGE);
   });
 
+  it("follows only a return_to on the emulator's own origin from /login/sso", async () => {
+    const { app } = createTestApp();
+    const sessionId = await signIn(app, "octocat");
+    for (const returnTo of ["/\t/evil.example/", "//evil.example", "/\\evil.example", "https://evil.example"]) {
+      const res = await app.request(`${base}/login/sso?return_to=${encodeURIComponent(returnTo)}`, {
+        headers: cookie(sessionId),
+      });
+      expect(res.status, returnTo).toBe(400);
+    }
+    const local = await app.request(`${base}/login/sso?return_to=${encodeURIComponent("/orgs/acme")}`, {
+      headers: cookie(sessionId),
+    });
+    expect(local.headers.get("Location")).toBe("/orgs/acme");
+  });
+
   it("sends the authorization page through the identity provider without a SAML session", async () => {
     const { app } = createTestApp();
     const url = ssoUrl(await api(app, "/repos/acme/secret", PAT));
