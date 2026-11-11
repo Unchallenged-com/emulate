@@ -6,6 +6,12 @@ export const SAML_NAMEID_FORMATS = {
   x509SubjectName: "urn:oasis:names:tc:SAML:1.1:nameid-format:x509SubjectName",
 } as const;
 
+export const SAML_ATTRNAME_FORMATS = {
+  basic: "urn:oasis:names:tc:SAML:2.0:attrname-format:basic",
+  uri: "urn:oasis:names:tc:SAML:2.0:attrname-format:uri",
+  unspecified: "urn:oasis:names:tc:SAML:2.0:attrname-format:unspecified",
+} as const;
+
 export const SAML_BINDINGS = {
   HTTP_REDIRECT: "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect",
   HTTP_POST: "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST",
@@ -16,6 +22,8 @@ export const SAML_NS = {
   ASSERTION: "urn:oasis:names:tc:SAML:2.0:assertion",
   METADATA: "urn:oasis:names:tc:SAML:2.0:metadata",
   XMLDSIG: "http://www.w3.org/2000/09/xmldsig#",
+  XML_SCHEMA: "http://www.w3.org/2001/XMLSchema",
+  XML_SCHEMA_INSTANCE: "http://www.w3.org/2001/XMLSchema-instance",
 } as const;
 
 export const SAML_SIGNATURE_ALGORITHMS = {

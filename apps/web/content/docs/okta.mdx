@@ -45,8 +45,16 @@ The assertion uses these `settings.signOn` fields:
 | `signatureAlgorithm`   | `RSA_SHA256` (default) or `RSA_SHA1`.                                                                                                                  |
 | `digestAlgorithm`      | `SHA256` (default) or `SHA1`.                                                                                                                          |
 | `authnContextClassRef` | Defaults to `urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport`.                                                                       |
+| `attributeStatements`  | Attributes added to the assertion in an `AttributeStatement`, before it is signed. See below.                                                          |
 
 The assertion is valid from 5 minutes before to 5 minutes after it is issued, and has no `SessionNotOnOrAfter`. One signing key and self-signed certificate is generated per emulator instance and shared by every SAML app; the metadata publishes that certificate.
+
+Each entry of `attributeStatements` becomes one `Attribute` whose `Name` is `name` and whose `NameFormat` is `namespace`: `urn:oasis:names:tc:SAML:2.0:attrname-format:basic` (the default), `urn:oasis:names:tc:SAML:2.0:attrname-format:uri` or `urn:oasis:names:tc:SAML:2.0:attrname-format:unspecified`. Every value is an `xs:string`.
+
+- `type: EXPRESSION`: each entry of `values` is an Okta Expression Language expression. The emulator evaluates `user.login`, `user.email`, `user.firstName`, `user.lastName`, `user.displayName`, `user.locale` and `user.timezone`, and leaves out any other expression (functions, operators, literals, `appuser.*`, unknown attributes such as `user.userName`).
+- `type: GROUP`: the names of the user's groups that match `filterValue`, with `filterType` `STARTS_WITH`, `EQUALS`, `CONTAINS` or `REGEX` (the whole group name must match the expression). Comparisons are case-sensitive.
+
+An attribute left without any value is not sent, and the assertion has no `AttributeStatement` when no attribute is left.
 
 Okta refuses to sign in a user who is not `ACTIVE` (status 400), and shows a user who is not assigned to the app the "App Not Assigned" page (status 403); neither gets a SAML response. Creating or updating a SAML app with both `responseSigned` and `assertionSigned` set to `false` returns `400` with `E0000001`, as Okta requires at least one of them; a seed config with such an app fails to load. Assign users with `app_assignments` in the seed config or `PUT /api/v1/apps/:appId/users/:userId`.
 
@@ -66,6 +74,16 @@ okta:
           ssoAcsUrl: https://sp.example.com/saml/acs
           audience: https://sp.example.com/metadata
           subjectNameIdFormat: urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress
+          attributeStatements:
+            - type: EXPRESSION
+              name: first_name
+              namespace: urn:oasis:names:tc:SAML:2.0:attrname-format:basic
+              values: [user.firstName]
+            - type: GROUP
+              name: groups
+              namespace: urn:oasis:names:tc:SAML:2.0:attrname-format:basic
+              filterType: STARTS_WITH
+              filterValue: Engineering
   app_assignments:
     - app_okta_id: 0oa_saml_app
       user_okta_id: 00u_alice
