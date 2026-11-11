@@ -264,24 +264,33 @@ describe("GitHub organization SAML SSO for personal access tokens", () => {
 });
 
 describe("GitHub organization SAML SSO for app tokens", () => {
-  it("authorizes an OAuth token issued while the browser has a SAML session", async () => {
-    const { app } = createTestApp();
-    const sessionId = await signIn(app, "octocat");
-    await samlSignIn(app, sessionId);
-
-    const token = await oauthToken(app, sessionId);
-    expect(token.startsWith("gho_")).toBe(true);
-    expect((await api(app, "/repos/acme/secret", token)).status).toBe(200);
-    expect((await api(app, "/repos/acme/secret", PAT)).status).toBe(403);
-  });
-
-  it("does not authorize an OAuth token issued without a SAML session", async () => {
+  it("refuses an OAuth token without an authorization URL, since only reauthorizing the app helps", async () => {
     const { app } = createTestApp();
     const token = await oauthToken(app, null);
     const res = await api(app, "/repos/acme/secret", token);
     expect(res.status).toBe(403);
     expect(((await res.json()) as { message: string }).message).toBe(OAUTH_MESSAGE);
-    expect(ssoUrl(res).pathname).toBe("/login/sso");
+    expect(res.headers.get("X-GitHub-SSO")).toBeNull();
+
+    const search = await api(app, "/search/repositories?q=secret", token);
+    const names = ((await search.json()) as { items: Array<{ full_name: string }> }).items.map((r) => r.full_name);
+    expect(names).toEqual(["plain/secret"]);
+    expect(search.headers.get("X-GitHub-SSO")).toBeNull();
+  });
+
+  it("authorizes the token of an app the user authorizes again during a SAML session", async () => {
+    const { app } = createTestApp();
+    const sessionId = await signIn(app, "octocat");
+    const before = await oauthToken(app, sessionId);
+    const refused = await api(app, "/repos/acme/secret", before);
+    expect(refused.status).toBe(403);
+    expect(refused.headers.get("X-GitHub-SSO")).toBeNull();
+
+    await samlSignIn(app, sessionId);
+    const after = await oauthToken(app, sessionId);
+    expect(after.startsWith("gho_")).toBe(true);
+    expect((await api(app, "/repos/acme/secret", after)).status).toBe(200);
+    expect((await api(app, "/repos/acme/secret", before)).status).toBe(403);
   });
 
   it("does not require authorization for an installation token", async () => {

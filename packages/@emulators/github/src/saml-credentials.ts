@@ -15,11 +15,11 @@ interface CredentialContext {
   omittedOrgIds: Set<number>;
 }
 
+/** A request to authorize a personal access token, the only credential the X-GitHub-SSO URL is documented for. */
 export interface CredentialAuthorizationRequest {
   org_id: number;
   login: string;
   credential_hash: string;
-  credential_type: CredentialType;
   created_at: number;
 }
 
@@ -126,8 +126,10 @@ export function deleteAuthorizationRequest(store: Store, id: string): void {
 
 /**
  * Registered before the routes. Gives each request with a user token its own credential context,
- * answers a refused credential with `X-GitHub-SSO: required; url=...`, and a list that left out
- * organizations with `X-GitHub-SSO: partial-results; organizations=...`. Inactive until an
+ * answers a refused personal access token with `X-GitHub-SSO: required; url=...`, and a list that
+ * left out organizations with `X-GitHub-SSO: partial-results; organizations=...`. GitHub documents
+ * the header for personal access tokens only: an OAuth token is authorized by authorizing the app
+ * again during an active SAML session, so its refusals carry no header. Inactive until an
  * organization has SAML configured.
  */
 export function samlCredentialMiddleware(store: Store, baseUrl: string) {
@@ -149,16 +151,16 @@ export function samlCredentialMiddleware(store: Store, baseUrl: string) {
     credentialContexts.set(scoped, context);
     c.set("authUser", scoped);
 
+    const personalAccessToken = context.credentialType === "personal access token";
     try {
       await next();
     } catch (error) {
       const org = error instanceof SamlSsoRequiredError ? gh.orgs.get(error.orgId) : undefined;
-      if (org) {
+      if (org && personalAccessToken) {
         const id = createAuthorizationRequest(store, {
           org_id: org.id,
           login: authUser.login,
           credential_hash: context.credentialHash,
-          credential_type: context.credentialType,
           created_at: Date.now(),
         });
         const returnTo = `/orgs/${org.login}/sso?authorization_request=${id}`;
@@ -167,7 +169,7 @@ export function samlCredentialMiddleware(store: Store, baseUrl: string) {
       throw error;
     }
 
-    if (context.omittedOrgIds.size > 0) {
+    if (personalAccessToken && context.omittedOrgIds.size > 0) {
       c.header("X-GitHub-SSO", `partial-results; organizations=${[...context.omittedOrgIds].join(",")}`);
     }
   };

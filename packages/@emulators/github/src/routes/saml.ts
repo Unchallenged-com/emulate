@@ -16,12 +16,7 @@ import {
   takePendingRelink,
   validateSamlResponse,
 } from "../saml.js";
-import {
-  authorizeCredential,
-  deleteAuthorizationRequest,
-  getAuthorizationRequest,
-  type CredentialAuthorizationRequest,
-} from "../saml-credentials.js";
+import { authorizeCredential, deleteAuthorizationRequest, getAuthorizationRequest } from "../saml-credentials.js";
 
 const SERVICE_LABEL = "GitHub";
 
@@ -82,7 +77,7 @@ export function samlRoutes({ app, store, baseUrl }: RouteContext): void {
       if (!request || request.org_id !== org.id) return c.html(authorizationNotFound(), 404);
       if (request.login !== session.login) return c.html(authorizationWrongAccount(), 403);
       if (getActiveSamlSession(store, session.sessionId, org.id)) {
-        return c.html(renderCredentialAuthorization(org.login, session.login, request, authorizationRequestId));
+        return c.html(renderCredentialAuthorization(org.login, session.login, authorizationRequestId));
       }
       // Authenticate with the identity provider first, then come back to authorize the credential.
       relayState = `/orgs/${org.login}/sso?authorization_request=${encodeURIComponent(authorizationRequestId)}`;
@@ -106,23 +101,17 @@ export function samlRoutes({ app, store, baseUrl }: RouteContext): void {
     );
   }
 
-  function renderCredentialAuthorization(
-    orgLogin: string,
-    login: string,
-    request: CredentialAuthorizationRequest,
-    requestId: string,
-  ): string {
-    const credential = request.credential_type === "OAuth token" ? "OAuth token" : "personal access token";
+  function renderCredentialAuthorization(orgLogin: string, login: string, requestId: string): string {
     const button = renderUserButton({
       letter: (login[0] ?? "?").toUpperCase(),
       login,
-      name: `Authorize this ${credential} for ${orgLogin}`,
+      name: `Authorize this personal access token for ${orgLogin}`,
       formAction: `/orgs/${orgLogin}/sso`,
       hiddenFields: { authorization_request: requestId },
     });
     return renderCardPage(
-      "Authorize credential",
-      `Authorize your ${escapeHtml(credential)} to access the <strong>${escapeHtml(orgLogin)}</strong> organization with SAML single sign-on.`,
+      "Authorize personal access token",
+      `Authorize your personal access token to access the <strong>${escapeHtml(orgLogin)}</strong> organization with SAML single sign-on.`,
       button,
       SERVICE_LABEL,
     );
@@ -151,7 +140,7 @@ export function samlRoutes({ app, store, baseUrl }: RouteContext): void {
       );
     }
 
-    authorizeCredential(store, org.id, request.credential_hash, request.credential_type);
+    authorizeCredential(store, org.id, request.credential_hash, "personal access token");
     deleteAuthorizationRequest(store, requestId);
     return c.redirect(`/orgs/${org.login}`, 302);
   });
