@@ -785,6 +785,12 @@ importers:
       '@emulators/core':
         specifier: workspace:*
         version: link:../core
+      '@xmldom/xmldom':
+        specifier: ^0.9.12
+        version: 0.9.12
+      xml-crypto:
+        specifier: ^6.4.0
+        version: 6.4.0
     devDependencies:
       '@slack/web-api':
         specifier: ^7.16.0
