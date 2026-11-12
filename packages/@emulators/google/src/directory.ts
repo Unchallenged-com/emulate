@@ -1,5 +1,5 @@
-import { createHash, randomBytes, randomInt } from "node:crypto";
-import type { Store } from "@emulators/core";
+import { createHash, randomInt } from "node:crypto";
+import type { Context, Store } from "@emulators/core";
 import type { GoogleGroup, GoogleGroupMember, GoogleUser } from "./entities.js";
 import { getGoogleStore, type GoogleStore } from "./store.js";
 
@@ -8,7 +8,7 @@ const CUSTOMER_ID_KEY = "google.directory.customerId";
 export function getCustomerId(store: Store): string {
   let customerId = store.getData<string>(CUSTOMER_ID_KEY);
   if (!customerId) {
-    customerId = `C${randomBytes(6).toString("hex").slice(0, 8)}`;
+    customerId = `C0${randomBase36(7)}`;
     store.setData(CUSTOMER_ID_KEY, customerId);
   }
   return customerId;
@@ -18,15 +18,34 @@ export function setCustomerId(store: Store, customerId: string): void {
   store.setData(CUSTOMER_ID_KEY, customerId);
 }
 
-/** Directory user IDs are numeric strings, and the same value is the ID token's `sub`. */
+function randomBase36(length: number): string {
+  let out = "";
+  while (out.length < length) out += randomInt(0, 36).toString(36);
+  return out;
+}
+
+// The formats of Google's identifiers, as real API responses show them (none is documented):
+// - user IDs: 21 digits starting with 1 ("104065793340555884068", "113716761692464219843" in the GSuiteAdmin
+//   integration's captured responses, demisto/content Packs/GSuiteAdmin/Integrations/GSuiteAdmin/README.md; the
+//   OpenID Connect page's `sub` example, "110169484474386276334"), the same value as the ID token's `sub`;
+// - group IDs: 15 characters, `0` then lowercase letters and digits ("017dp8vu2zdcnpe" in the same responses,
+//   "01baon6m2gef3w5" in abbaspour/actions-gallery post-login/google-groups/groups-sample.json);
+// - customer IDs: `C0` then 7 lowercase letters and digits ("C02f0zfqw", "C03puekhd", the same responses).
 export function generateDirectoryUserId(): string {
-  let id = String(randomInt(1, 10));
+  let id = "1";
   while (id.length < 21) id += String(randomInt(0, 10));
   return id;
 }
 
 export function generateGroupId(): string {
-  return `0${randomBytes(8).toString("hex").slice(0, 14)}`;
+  return `0${randomBase36(14)}`;
+}
+
+/** The test domain alias Google gives every address of a domain with Gmail (`<local>@<domain>.test-google-a.com`),
+ * listed in `nonEditableAliases` (captured responses above). */
+export function testDomainAlias(email: string): string {
+  const [local, domain] = email.split("@");
+  return `${local}@${domain}.test-google-a.com`;
 }
 
 export function emailDomain(email: string): string {
@@ -55,8 +74,11 @@ export function findMember(gs: GoogleStore, group: GoogleGroup, key: string): Go
     .find((member) => member.member_id === key || member.email.toLowerCase() === lowered);
 }
 
+// Etags are two base64url parts joined by a slash, in quotes ("BvGfkzKoKVD0NM7VdXdzkXDD-nHLkyMjheL_9Z5X0H0/
+// oMJEIb2O8LE-zfPM0TV_9m3WkMA" in the captured responses above).
 function etagOf(resource: Record<string, unknown>): string {
-  return `"${createHash("sha256").update(JSON.stringify(resource)).digest("base64url").slice(0, 27)}"`;
+  const hash = createHash("sha256").update(JSON.stringify(resource)).digest("base64url");
+  return `"${hash.slice(0, 43)}/${hash.slice(8, 35)}"`;
 }
 
 export function userResource(store: Store, user: GoogleUser): Record<string, unknown> {
@@ -72,17 +94,21 @@ export function userResource(store: Store, user: GoogleUser): Record<string, unk
     },
     isAdmin: user.is_admin === true,
     isDelegatedAdmin: false,
-    ...(user.last_login_time ? { lastLoginTime: user.last_login_time } : {}),
+    // A user who never signed in shows the epoch (captured responses above).
+    lastLoginTime: user.last_login_time ?? "1970-01-01T00:00:00.000Z",
     creationTime: user.creation_time ?? new Date(user.created_at).toISOString(),
     agreedToTerms: Boolean(user.last_login_time),
     suspended,
+    // "ADMIN" for a suspension by an administrator, as a real response shows it (GAM-team/GAM issue #1920).
     ...(suspended ? { suspensionReason: "ADMIN" } : {}),
     archived: false,
     changePasswordAtNextLogin: user.change_password_at_next_login === true,
     ipWhitelisted: false,
-    emails: [{ address: user.email, primary: true }],
+    emails: [{ address: user.email, primary: true }, { address: testDomainAlias(user.email) }],
+    nonEditableAliases: [testDomainAlias(user.email)],
     customerId: getCustomerId(store),
     orgUnitPath: user.org_unit_path ?? "/",
+    isMailboxSetup: true,
     includeInGlobalAddressList: user.include_in_global_address_list ?? true,
     isEnrolledIn2Sv: false,
     isEnforcedIn2Sv: false,
@@ -99,6 +125,7 @@ export function groupResource(gs: GoogleStore, group: GoogleGroup): Record<strin
     directMembersCount: String(gs.groupMembers.findBy("group_google_id", group.google_id).length),
     description: group.description,
     adminCreated: group.admin_created,
+    nonEditableAliases: [testDomainAlias(group.email)],
   };
   return { ...resource, etag: etagOf(resource) };
 }
@@ -208,4 +235,36 @@ export function selectFields(value: unknown, tree: FieldTree | null): unknown {
     }
   }
   return out;
+}
+
+const CREDENTIALS_HELP =
+  "Expected OAuth 2 access token, login cookie or other valid authentication credential. See https://developers.google.com/identity/sign-in/web/devconsole-project.";
+
+/**
+ * The Directory API's 401, as admin.googleapis.com answers it (captured 2026-11-12 with no `Authorization` header,
+ * and with an unknown bearer token): "Login Required." with reason `required` when no credential is sent, "Invalid
+ * Credentials" with reason `authError` otherwise. Google adds a `google.rpc.ErrorInfo` detail naming its internal
+ * method to the first; the emulator leaves it out.
+ */
+export function directoryAuthError(c: Context): Response {
+  const missing = !c.req.header("Authorization");
+  return c.json(
+    {
+      error: {
+        code: 401,
+        message: `${missing ? "Request is missing required authentication credential" : "Request had invalid authentication credentials"}. ${CREDENTIALS_HELP}`,
+        errors: [
+          {
+            message: missing ? "Login Required." : "Invalid Credentials",
+            domain: "global",
+            reason: missing ? "required" : "authError",
+            location: "Authorization",
+            locationType: "header",
+          },
+        ],
+        status: "UNAUTHENTICATED",
+      },
+    },
+    401,
+  );
 }

@@ -101,7 +101,15 @@ describe("Google Admin SDK Directory API", () => {
       orgUnitPath: "/",
       customerId: "C0clinic1",
     });
-    expect(user.id).toMatch(/^\d{21}$/);
+    expect(user.id).toMatch(/^1\d{20}$/);
+    expect(user).toMatchObject({
+      lastLoginTime: "1970-01-01T00:00:00.000Z",
+      agreedToTerms: false,
+      isMailboxSetup: true,
+      nonEditableAliases: ["nina@clinic.example.test-google-a.com"],
+      emails: [{ address: "nina@clinic.example", primary: true }, { address: "nina@clinic.example.test-google-a.com" }],
+    });
+    expect(user.etag).toMatch(/^"[\w-]{43}\/[\w-]{27}"$/);
     expect(user).not.toHaveProperty("password");
 
     for (const key of ["nina@clinic.example", "NINA@clinic.example", user.id]) {
@@ -170,7 +178,11 @@ describe("Google Admin SDK Directory API", () => {
 
     const missing = await request(`${directory}/users/nobody@clinic.example`, auth);
     expect(missing.status).toBe(404);
-    expect(await missing.json()).toMatchObject({ error: { errors: [{ reason: "notFound" }] } });
+    expect(await missing.json()).toMatchObject({
+      error: { message: "Resource Not Found: userKey", errors: [{ reason: "notFound" }] },
+    });
+    const taken = await request(`${directory}/users`, auth, "POST", newUser(staff));
+    expect(await taken.json()).toMatchObject({ error: { code: 409, message: "Entity already exists." } });
     expect((await request(`${directory}/users`, auth)).status).toBe(400);
     expect((await request(`${directory}/users?customer=my_customer&showDeleted=false`, auth)).status).toBe(200);
     for (const unsupported of ["showDeleted=true", "query=isSuspended%3Dtrue", "event=add", "customFieldMask=hr"]) {
@@ -178,7 +190,11 @@ describe("Google Admin SDK Directory API", () => {
       expect(response.status, unsupported).toBe(400);
     }
     expect((await request(`${directory}/users?customer=C0other`, auth)).status).toBe(400);
-    expect((await request(`${directory}/users?domain=other.example`, auth)).status).toBe(400);
+    const unknownDomain = await request(`${directory}/users?domain=other.example`, auth);
+    expect(unknownDomain.status).toBe(404);
+    expect(await unknownDomain.json()).toMatchObject({
+      error: { message: "Domain not found.", errors: [{ reason: "notFound" }] },
+    });
   });
 
   it("suspends a user, who then cannot sign in, and restores them", async () => {
@@ -186,6 +202,8 @@ describe("Google Admin SDK Directory API", () => {
     const auth = await token();
     const suspended = await request(`${directory}/users/${staff}`, auth, "PATCH", { suspended: true });
     expect(await suspended.json()).toMatchObject({ suspended: true, suspensionReason: "ADMIN" });
+    const customer = (await (await request(`${directory}/users/${staff}`, auth)).json()) as { customerId: string };
+    expect(customer.customerId).toBe("C0clinic1");
 
     const refused = await signIn(staff, "openid email");
     expect(refused.status).toBe(403);
@@ -232,8 +250,10 @@ describe("Google Admin SDK Directory API", () => {
       description: "Care staff",
     });
     const group = (await created.json()) as Record<string, any>;
+    expect(group.id).toMatch(/^0[0-9a-z]{14}$/);
     expect(group).toMatchObject({
       kind: "admin#directory#group",
+      nonEditableAliases: ["nurses@clinic.example.test-google-a.com"],
       email: "nurses@clinic.example",
       name: "Nurses",
       directMembersCount: "0",
@@ -252,7 +272,19 @@ describe("Google Admin SDK Directory API", () => {
     });
     const again = await request(`${directory}/groups/${group.id}/members`, auth, "POST", { email: staff });
     expect(again.status).toBe(409);
-    expect(await again.json()).toMatchObject({ error: { errors: [{ reason: "duplicate" }] } });
+    expect(await again.json()).toMatchObject({
+      error: { message: "Member already exists.", errors: [{ reason: "duplicate" }] },
+    });
+    const notMember = await request(`${directory}/groups/${group.id}/members/${admin}`, auth);
+    expect(notMember.status).toBe(404);
+    expect(await notMember.json()).toMatchObject({ error: { message: "Resource Not Found: memberKey" } });
+    const noAccount = await request(`${directory}/groups/${group.id}/members/nobody@clinic.example`, auth);
+    expect(noAccount.status).toBe(400);
+    expect(await noAccount.json()).toMatchObject({
+      error: { message: "Missing required field: memberKey", errors: [{ reason: "required" }] },
+    });
+    const unknownId = await request(`${directory}/groups/${group.id}/members`, auth, "POST", { id: "123" });
+    expect(await unknownId.json()).toMatchObject({ error: { code: 400, message: "Invalid Input: memberKey" } });
 
     await request(`${directory}/groups`, auth, "POST", { email: "care@clinic.example" });
     const nested = await request(`${directory}/groups/care@clinic.example/members`, auth, "POST", {
@@ -262,7 +294,10 @@ describe("Google Admin SDK Directory API", () => {
     const cycle = await request(`${directory}/groups/nurses@clinic.example/members`, auth, "POST", {
       email: "care@clinic.example",
     });
-    expect(cycle.status).toBe(400);
+    expect(cycle.status).toBe(412);
+    expect(await cycle.json()).toMatchObject({
+      error: { message: "Cyclic memberships not allowed", errors: [{ reason: "conditionNotMet" }] },
+    });
 
     const hasMember = await request(`${directory}/groups/care@clinic.example/hasMember/${staff}`, auth);
     expect(await hasMember.json()).toEqual({ isMember: true });
@@ -295,13 +330,27 @@ describe("Google Admin SDK Directory API", () => {
 
   it("requires a super administrator and the Directory scopes in strict mode", async () => {
     const { request, token } = fixture();
-    expect((await request(`${directory}/users?customer=my_customer`)).status).toBe(401);
-    expect((await request(`${directory}/users?customer=my_customer`, "made-up")).status).toBe(401);
+    const anonymous = await request(`${directory}/users?customer=my_customer`);
+    expect(anonymous.status).toBe(401);
+    expect(await anonymous.json()).toMatchObject({
+      error: {
+        code: 401,
+        status: "UNAUTHENTICATED",
+        errors: [{ message: "Login Required.", reason: "required", location: "Authorization" }],
+      },
+    });
+    const madeUp = await request(`${directory}/users?customer=my_customer`, "made-up");
+    expect(madeUp.status).toBe(401);
+    expect(await madeUp.json()).toMatchObject({
+      error: { errors: [{ message: "Invalid Credentials", reason: "authError", locationType: "header" }] },
+    });
 
     const staffToken = await token(staff, scope("admin.directory.user"));
     const forbidden = await request(`${directory}/users?customer=my_customer`, staffToken);
     expect(forbidden.status).toBe(403);
-    expect(await forbidden.json()).toMatchObject({ error: { errors: [{ reason: "forbidden" }] } });
+    expect(await forbidden.json()).toMatchObject({
+      error: { message: "Not Authorized to access this resource/api", errors: [{ reason: "forbidden" }] },
+    });
 
     const readOnly = await token(admin, scope("admin.directory.user.readonly"));
     expect((await request(`${directory}/users?customer=my_customer`, readOnly)).status).toBe(200);
@@ -312,6 +361,27 @@ describe("Google Admin SDK Directory API", () => {
 
     const memberScope = await token(admin, scope("admin.directory.group.member"));
     expect((await request(`${directory}/groups`, memberScope, "POST", { email: "x@clinic.example" })).status).toBe(403);
+  });
+
+  it("uses Google's identifier formats and records the last sign-in", async () => {
+    const app = new Hono<AppEnv>();
+    const store = new Store();
+    const tokens: TokenMap = new Map();
+    app.use("*", authMiddleware(tokens, undefined, { login: admin, id: 1, scopes: [] }));
+    googlePlugin.register(app, store, new WebhookDispatcher(), base, tokens);
+    seedFromConfig(store, base, { users: [{ email: admin, name: "Ada Admin", is_admin: true }] });
+    const response = await app.request(`${base}${directory}/users/${admin}`, {
+      headers: { Authorization: "Bearer x" },
+    });
+    const user = (await response.json()) as { customerId: string; lastLoginTime: string };
+    expect(user.customerId).toMatch(/^C0[0-9a-z]{7}$/);
+    expect(user.lastLoginTime).toBe("1970-01-01T00:00:00.000Z");
+
+    const { request, token } = fixture();
+    const auth = await token();
+    const signedIn = (await (await request(`${directory}/users/${admin}`, auth)).json()) as Record<string, unknown>;
+    expect(signedIn.lastLoginTime).not.toBe("1970-01-01T00:00:00.000Z");
+    expect(signedIn.agreedToTerms).toBe(true);
   });
 
   it("keeps the default permissive mode", async () => {
