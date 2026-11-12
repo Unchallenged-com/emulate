@@ -27,6 +27,8 @@ export interface GoogleGroup extends Entity {
   name: string;
   description: string;
   admin_created: boolean;
+  /** Groups Settings API values set on the group, by property name. */
+  settings?: Record<string, string | number>;
 }
 
 export interface GoogleGroupMember extends Entity {
