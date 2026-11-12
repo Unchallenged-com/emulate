@@ -1,5 +1,6 @@
 import type { AppEnv, Hono, MiddlewareHandler, Store } from "@emulators/core";
 import { directoryRouteScopes } from "./directory-discovery.js";
+import { directoryAuthError } from "./directory.js";
 import { googleApiError } from "./helpers.js";
 import { getAccessTokens } from "./oauth-tokens.js";
 import { getGoogleStore } from "./store.js";
@@ -105,6 +106,9 @@ export function googleAuthMiddleware(app: Hono<AppEnv>, store: Store): Middlewar
     const record = token ? getAccessTokens(store).get(token) : undefined;
     const user = record && getGoogleStore(store).users.findOneBy("email", record.email);
     if (!token || !record || record.expiresAt <= Date.now() || !user) {
+      if (path.startsWith("/admin/directory/v1/")) {
+        return directoryAuthError(c);
+      }
       return googleApiError(c, 401, "Request had invalid authentication credentials.", "authError", "UNAUTHENTICATED");
     }
 
