@@ -96,6 +96,11 @@ AWS API coverage:
 Google Calendar discovery:
   GET /discovery/v1/apis/calendar/v3/rest returns the public discovery document for the emulated Calendar v3 surface.
 
+Google Admin SDK Directory:
+  Users, groups, and members under /admin/directory/v1; discovery at /$discovery/rest?version=directory_v1.
+  Seed google.users[].is_admin for super administrators; a suspended user cannot sign in.
+  In strict mode, calls need the method's admin.directory.* scope and a super administrator.
+
 Google OIDC:
   Refresh-token grants return an access token and an RS256-signed ID token.
   Discovery advertises RS256 ID tokens. GET /oauth2/v3/certs returns JWKS; GET /oauth2/v1/certs returns matching PEM X.509 certificates.

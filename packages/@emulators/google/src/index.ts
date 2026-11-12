@@ -17,6 +17,8 @@ import { historyRoutes } from "./routes/history.js";
 import { labelRoutes } from "./routes/labels.js";
 import { messageRoutes } from "./routes/messages.js";
 import { oauthRoutes } from "./routes/oauth.js";
+import { adminDirectoryRoutes } from "./routes/admin-directory.js";
+import { setCustomerId } from "./directory.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { threadRoutes } from "./routes/threads.js";
 import { getGoogleStore } from "./store.js";
@@ -39,6 +41,9 @@ export interface GoogleSeedUser {
   hd?: string;
   /** A super administrator, as the Directory API's `isAdmin`. */
   is_admin?: boolean;
+  /** Suspended, as the Directory API's `suspended`: the user cannot sign in. */
+  suspended?: boolean;
+  org_unit_path?: string;
 }
 
 export interface GoogleSeedLabel {
@@ -121,6 +126,8 @@ export interface GoogleSeedDriveItem {
 export interface GoogleSeedConfig {
   port?: number;
   strict_scopes?: boolean;
+  /** The Directory API's `customerId` of the account; generated when not set. */
+  customer_id?: string;
   users?: GoogleSeedUser[];
   oauth_clients?: Array<{
     client_id: string;
@@ -304,6 +311,9 @@ export function seedFromConfig(store: Store, _baseUrl: string, config: GoogleSee
   if (config.strict_scopes !== undefined) {
     store.setData("google.strict_scopes", config.strict_scopes);
   }
+  if (config.customer_id) {
+    setCustomerId(store, config.customer_id);
+  }
 
   if (config.users) {
     for (const user of config.users) {
@@ -320,7 +330,9 @@ export function seedFromConfig(store: Store, _baseUrl: string, config: GoogleSee
           email_verified: user.email_verified ?? true,
           locale: user.locale ?? "en",
           hd: resolveHd(user),
-          ...(user.is_admin ? { is_admin: true } : {}),
+          is_admin: user.is_admin ?? false,
+          suspended: user.suspended ?? false,
+          org_unit_path: user.org_unit_path ?? "/",
         });
       }
 
@@ -512,6 +524,7 @@ export const googlePlugin: ServicePlugin = {
     app.use("*", googleAuthMiddleware(app, store));
     oauthRoutes(ctx);
     samlRoutes(ctx);
+    adminDirectoryRoutes(ctx);
     calendarRoutes(ctx);
     driveRoutes(ctx);
     messageRoutes(ctx);

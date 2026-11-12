@@ -1,0 +1,318 @@
+import { describe, expect, it } from "vitest";
+import { Hono, Store, WebhookDispatcher, authMiddleware, type AppEnv, type TokenMap } from "@emulators/core";
+import { googlePlugin, seedFromConfig } from "../index.js";
+
+const base = "http://localhost:4000";
+const directory = "/admin/directory/v1";
+const scope = (name: string) => `https://www.googleapis.com/auth/${name}`;
+const adminScopes = [scope("admin.directory.user"), scope("admin.directory.group")].join(" ");
+const client = { client_id: "directory-client", client_secret: "directory-secret" };
+const redirectUri = "http://127.0.0.1:8080/";
+const admin = "admin@clinic.example";
+const staff = "staff@clinic.example";
+
+function fixture(strict = true) {
+  const app = new Hono<AppEnv>();
+  const store = new Store();
+  const tokens: TokenMap = new Map();
+  const fallback = { login: admin, id: 1, scopes: [] };
+  app.use("*", authMiddleware(tokens, undefined, fallback));
+  googlePlugin.register(app, store, new WebhookDispatcher(), base, tokens);
+  googlePlugin.seed?.(store, base);
+  seedFromConfig(store, base, {
+    strict_scopes: strict,
+    customer_id: "C0clinic1",
+    users: [
+      { email: admin, name: "Ada Admin", is_admin: true },
+      { email: staff, name: "Sam Staff" },
+    ],
+    oauth_clients: [{ ...client, redirect_uris: [redirectUri] }],
+  });
+
+  function request(path: string, token?: string, method = "GET", body?: unknown) {
+    return app.request(`${base}${path}`, {
+      method,
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), "Content-Type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+  }
+
+  function signIn(email: string, scopes: string) {
+    return app.request(`${base}/o/oauth2/v2/auth/callback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ email, redirect_uri: redirectUri, scope: scopes, client_id: client.client_id }),
+    });
+  }
+
+  async function token(email = admin, scopes = adminScopes): Promise<string> {
+    const authorize = await signIn(email, scopes);
+    expect(authorize.status).toBe(302);
+    const code = new URL(authorize.headers.get("Location")!).searchParams.get("code")!;
+    const exchange = await app.request(`${base}/oauth2/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ ...client, grant_type: "authorization_code", code, redirect_uri: redirectUri }),
+    });
+    expect(exchange.status).toBe(200);
+    return ((await exchange.json()) as { access_token: string }).access_token;
+  }
+
+  return { app, store, request, signIn, token };
+}
+
+const newUser = (email: string, extra: Record<string, unknown> = {}) => ({
+  primaryEmail: email,
+  name: { givenName: "Nina", familyName: "Nurse" },
+  password: "correct-horse-battery",
+  ...extra,
+});
+
+describe("Google Admin SDK Directory API", () => {
+  it("serves its discovery document at the v1 and v2 discovery URLs, rooted at the emulator", async () => {
+    const { request } = fixture();
+    for (const path of ["/discovery/v1/apis/admin/directory_v1/rest", "/$discovery/rest?version=directory_v1"]) {
+      const response = await request(path);
+      expect(response.status).toBe(200);
+      const doc = (await response.json()) as Record<string, any>;
+      expect(doc).toMatchObject({ id: "admin:directory_v1", rootUrl: `${base}/`, servicePath: "" });
+      expect(doc.resources.users.methods.insert).toMatchObject({
+        httpMethod: "POST",
+        path: "admin/directory/v1/users",
+      });
+      expect(Object.keys(doc.resources.members.methods)).toContain("hasMember");
+    }
+    expect((await request("/$discovery/rest?version=v1")).status).toBe(404);
+  });
+
+  it("creates, reads, lists and updates users", async () => {
+    const { request, token } = fixture();
+    const auth = await token();
+
+    const created = await request(`${directory}/users`, auth, "POST", newUser("nina@clinic.example"));
+    expect(created.status).toBe(200);
+    const user = (await created.json()) as Record<string, any>;
+    expect(user).toMatchObject({
+      kind: "admin#directory#user",
+      primaryEmail: "nina@clinic.example",
+      name: { givenName: "Nina", familyName: "Nurse", fullName: "Nina Nurse" },
+      isAdmin: false,
+      suspended: false,
+      orgUnitPath: "/",
+      customerId: "C0clinic1",
+    });
+    expect(user.id).toMatch(/^\d{21}$/);
+    expect(user).not.toHaveProperty("password");
+
+    for (const key of ["nina@clinic.example", "NINA@clinic.example", user.id]) {
+      const got = await request(`${directory}/users/${encodeURIComponent(key)}`, auth);
+      expect(got.status).toBe(200);
+      expect(await got.json()).toMatchObject({ id: user.id });
+    }
+
+    const updated = await request(`${directory}/users/${user.id}`, auth, "PUT", {
+      name: { givenName: "Nina", familyName: "Martin" },
+      isAdmin: true,
+    });
+    expect(await updated.json()).toMatchObject({ name: { familyName: "Martin" }, isAdmin: false, suspended: false });
+
+    const listed = await request(`${directory}/users?customer=my_customer&maxResults=2`, auth);
+    const first = (await listed.json()) as Record<string, any>;
+    expect(first.users.map((u: { primaryEmail: string }) => u.primaryEmail)).toEqual([admin, "nina@clinic.example"]);
+    const second = await request(
+      `${directory}/users?customer=C0clinic1&maxResults=2&pageToken=${first.nextPageToken}`,
+      auth,
+    );
+    const rest = (await second.json()) as Record<string, any>;
+    expect(rest.users.map((u: { primaryEmail: string }) => u.primaryEmail)).toEqual([staff]);
+    expect(rest).not.toHaveProperty("nextPageToken");
+  });
+
+  it("returns partial responses for the fields parameter", async () => {
+    const { request, token } = fixture();
+    const auth = await token();
+    const response = await request(
+      `${directory}/users?domain=clinic.example&fields=nextPageToken,users(primaryEmail,name/givenName,suspended)`,
+      auth,
+    );
+    expect(await response.json()).toEqual({
+      users: [
+        { primaryEmail: admin, name: { givenName: "Ada" }, suspended: false },
+        { primaryEmail: staff, name: { givenName: "Sam" }, suspended: false },
+      ],
+    });
+  });
+
+  it("refuses invalid users with Google's error reasons", async () => {
+    const { request, token } = fixture();
+    const auth = await token();
+    const cases: Array<[unknown, number, string]> = [
+      [{ ...newUser("a@clinic.example"), primaryEmail: undefined }, 400, "required"],
+      [{ ...newUser("a@clinic.example"), name: { givenName: "A" } }, 400, "required"],
+      [{ ...newUser("a@clinic.example"), password: undefined }, 400, "required"],
+      [newUser("a@clinic.example", { password: "short" }), 400, "invalid"],
+      [newUser("a@clinic.example", { password: "abc", hashFunction: "SHA-1" }), 400, "invalid"],
+      [newUser("a@clinic.example", { name: { givenName: "A".repeat(61), familyName: "B" } }), 400, "invalid"],
+      [newUser(staff), 409, "duplicate"],
+    ];
+    for (const [body, status, reason] of cases) {
+      const response = await request(`${directory}/users`, auth, "POST", body);
+      expect(response.status, JSON.stringify(body)).toBe(status);
+      expect(await response.json()).toMatchObject({ error: { code: status, errors: [{ reason, domain: "global" }] } });
+    }
+    const accepted = await request(
+      `${directory}/users`,
+      auth,
+      "POST",
+      newUser("b@clinic.example", { password: "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3", hashFunction: "SHA-1" }),
+    );
+    expect(accepted.status).toBe(200);
+
+    const missing = await request(`${directory}/users/nobody@clinic.example`, auth);
+    expect(missing.status).toBe(404);
+    expect(await missing.json()).toMatchObject({ error: { errors: [{ reason: "notFound" }] } });
+    expect((await request(`${directory}/users`, auth)).status).toBe(400);
+    expect((await request(`${directory}/users?customer=C0other`, auth)).status).toBe(400);
+    expect((await request(`${directory}/users?domain=other.example`, auth)).status).toBe(400);
+  });
+
+  it("suspends a user, who then cannot sign in, and restores them", async () => {
+    const { request, signIn, token } = fixture();
+    const auth = await token();
+    const suspended = await request(`${directory}/users/${staff}`, auth, "PATCH", { suspended: true });
+    expect(await suspended.json()).toMatchObject({ suspended: true, suspensionReason: "ADMIN" });
+
+    const refused = await signIn(staff, "openid email");
+    expect(refused.status).toBe(403);
+    expect(refused.headers.get("Location")).toBeNull();
+
+    const restored = await request(`${directory}/users/${staff}`, auth, "PUT", { suspended: false });
+    const body = (await restored.json()) as Record<string, unknown>;
+    expect(body.suspended).toBe(false);
+    expect(body).not.toHaveProperty("suspensionReason");
+    expect((await signIn(staff, "openid email")).status).toBe(302);
+  });
+
+  it("deletes a user, their memberships and their sign-in", async () => {
+    const { app, request, signIn, token } = fixture();
+    const auth = await token();
+    await request(`${directory}/groups`, auth, "POST", { email: "nurses@clinic.example" });
+    await request(`${directory}/groups/nurses@clinic.example/members`, auth, "POST", { email: staff });
+    const staffToken = await token(staff, "openid email");
+
+    const deleted = await request(`${directory}/users/${staff}`, auth, "DELETE");
+    expect(deleted.status).toBe(200);
+    expect(await deleted.text()).toBe("");
+    expect((await request(`${directory}/users/${staff}`, auth)).status).toBe(404);
+    const members = await request(`${directory}/groups/nurses@clinic.example/members`, auth);
+    expect(await members.json()).toMatchObject({ members: [] });
+
+    const authorize = await signIn(staff, "openid email");
+    const code = new URL(authorize.headers.get("Location")!).searchParams.get("code")!;
+    const exchange = await app.request(`${base}/oauth2/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ ...client, grant_type: "authorization_code", code, redirect_uri: redirectUri }),
+    });
+    expect(exchange.status).toBe(400);
+    expect((await request("/oauth2/v2/userinfo", staffToken)).status).toBe(401);
+  });
+
+  it("manages groups and their members", async () => {
+    const { request, token } = fixture();
+    const auth = await token();
+    const created = await request(`${directory}/groups`, auth, "POST", {
+      email: "nurses@clinic.example",
+      name: "Nurses",
+      description: "Care staff",
+    });
+    const group = (await created.json()) as Record<string, any>;
+    expect(group).toMatchObject({
+      kind: "admin#directory#group",
+      email: "nurses@clinic.example",
+      name: "Nurses",
+      directMembersCount: "0",
+      adminCreated: true,
+    });
+    expect((await request(`${directory}/groups`, auth, "POST", { email: "nurses@clinic.example" })).status).toBe(409);
+    expect((await request(`${directory}/groups`, auth, "POST", { email: staff })).status).toBe(409);
+    expect((await request(`${directory}/groups`, auth, "POST", { name: "No email" })).status).toBe(400);
+
+    const added = await request(`${directory}/groups/${group.id}/members`, auth, "POST", { email: staff });
+    expect(await added.json()).toMatchObject({
+      kind: "admin#directory#member",
+      email: staff,
+      role: "MEMBER",
+      type: "USER",
+    });
+    const again = await request(`${directory}/groups/${group.id}/members`, auth, "POST", { email: staff });
+    expect(again.status).toBe(409);
+    expect(await again.json()).toMatchObject({ error: { errors: [{ reason: "duplicate" }] } });
+
+    await request(`${directory}/groups`, auth, "POST", { email: "care@clinic.example" });
+    const nested = await request(`${directory}/groups/care@clinic.example/members`, auth, "POST", {
+      email: "nurses@clinic.example",
+    });
+    expect(await nested.json()).toMatchObject({ type: "GROUP" });
+    const cycle = await request(`${directory}/groups/nurses@clinic.example/members`, auth, "POST", {
+      email: "care@clinic.example",
+    });
+    expect(cycle.status).toBe(400);
+
+    const hasMember = await request(`${directory}/groups/care@clinic.example/hasMember/${staff}`, auth);
+    expect(await hasMember.json()).toEqual({ isMember: true });
+    const derived = await request(
+      `${directory}/groups/care@clinic.example/members?includeDerivedMembership=true`,
+      auth,
+    );
+    expect(await derived.json()).toMatchObject({ members: [{ email: staff }] });
+
+    const promoted = await request(`${directory}/groups/${group.id}/members/${staff}`, auth, "PATCH", {
+      role: "MANAGER",
+    });
+    expect(await promoted.json()).toMatchObject({ role: "MANAGER" });
+    const managers = await request(`${directory}/groups/${group.id}/members?roles=MANAGER,OWNER`, auth);
+    expect(await managers.json()).toMatchObject({ members: [{ email: staff, role: "MANAGER" }] });
+
+    const ofUser = await request(`${directory}/groups?userKey=${staff}`, auth);
+    expect(await ofUser.json()).toMatchObject({
+      groups: [{ email: "nurses@clinic.example", directMembersCount: "1" }],
+    });
+
+    expect((await request(`${directory}/groups/${group.id}/members/${staff}`, auth, "DELETE")).status).toBe(200);
+    expect((await request(`${directory}/groups/${group.id}/members/${staff}`, auth, "DELETE")).status).toBe(404);
+    const patched = await request(`${directory}/groups/${group.id}`, auth, "PATCH", { description: "Nursing staff" });
+    expect(await patched.json()).toMatchObject({ name: "Nurses", description: "Nursing staff" });
+    expect((await request(`${directory}/groups/care@clinic.example`, auth, "DELETE")).status).toBe(200);
+    const listed = await request(`${directory}/groups?customer=my_customer`, auth);
+    expect(await listed.json()).toMatchObject({ groups: [{ email: "nurses@clinic.example" }] });
+  });
+
+  it("requires a super administrator and the Directory scopes in strict mode", async () => {
+    const { request, token } = fixture();
+    expect((await request(`${directory}/users?customer=my_customer`)).status).toBe(401);
+    expect((await request(`${directory}/users?customer=my_customer`, "made-up")).status).toBe(401);
+
+    const staffToken = await token(staff, scope("admin.directory.user"));
+    const forbidden = await request(`${directory}/users?customer=my_customer`, staffToken);
+    expect(forbidden.status).toBe(403);
+    expect(await forbidden.json()).toMatchObject({ error: { errors: [{ reason: "forbidden" }] } });
+
+    const readOnly = await token(admin, scope("admin.directory.user.readonly"));
+    expect((await request(`${directory}/users?customer=my_customer`, readOnly)).status).toBe(200);
+    const write = await request(`${directory}/users`, readOnly, "POST", newUser("c@clinic.example"));
+    expect(write.status).toBe(403);
+    expect(await write.json()).toMatchObject({ error: { errors: [{ reason: "insufficientPermissions" }] } });
+    expect((await request(`${directory}/groups?customer=my_customer`, readOnly)).status).toBe(403);
+
+    const memberScope = await token(admin, scope("admin.directory.group.member"));
+    expect((await request(`${directory}/groups`, memberScope, "POST", { email: "x@clinic.example" })).status).toBe(403);
+  });
+
+  it("keeps the default permissive mode", async () => {
+    const { request } = fixture(false);
+    const response = await request(`${directory}/users`, "any-token", "POST", newUser("d@clinic.example"));
+    expect(response.status).toBe(200);
+    expect((await request(`${directory}/users/d@clinic.example`, "any-token")).status).toBe(200);
+  });
+});
