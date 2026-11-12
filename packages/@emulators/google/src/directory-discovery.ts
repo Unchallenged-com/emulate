@@ -494,6 +494,12 @@ const document = {
             $ref: "Users",
           },
           parameters: {
+            customFieldMask: {
+              description:
+                "A comma-separated list of schema names. All fields from these schemas are fetched. This should only be set when `projection=custom`.",
+              location: "query",
+              type: "string",
+            },
             pageToken: {
               location: "query",
               type: "string",
@@ -510,6 +516,12 @@ const document = {
               default: "basic",
               type: "string",
               description: "What subset of fields to fetch for this user.",
+            },
+            query: {
+              location: "query",
+              description:
+                "Query string for searching user fields. For more information on constructing user queries, see [Search for Users](https://developers.google.com/workspace/admin/directory/v1/guides/search-users).",
+              type: "string",
             },
             viewType: {
               location: "query",
@@ -530,11 +542,29 @@ const document = {
               location: "query",
               enum: ["ASCENDING", "DESCENDING"],
             },
+            showDeleted: {
+              location: "query",
+              type: "string",
+              description: "If set to `true`, retrieves the list of deleted users. (Default: `false`)",
+            },
             domain: {
               location: "query",
               description:
                 "The domain name. Use this field to get users from only one domain. To return all domains for a customer account, use the `customer` query parameter instead. Either the `customer` or the `domain` parameter must be provided.",
               type: "string",
+            },
+            event: {
+              enumDescriptions: [
+                "User Created Event",
+                "User Deleted Event",
+                "User Admin Status Change Event",
+                "User Undeleted Event",
+                "User Updated Event",
+              ],
+              enum: ["add", "delete", "makeAdmin", "undelete", "update"],
+              description: "Event on which subscription is intended (if subscribing)",
+              type: "string",
+              location: "query",
             },
             customer: {
               location: "query",
@@ -571,6 +601,12 @@ const document = {
           },
           id: "directory.users.get",
           parameters: {
+            customFieldMask: {
+              description:
+                "A comma-separated list of schema names. All fields from these schemas are fetched. This should only be set when `projection=custom`.",
+              location: "query",
+              type: "string",
+            },
             viewType: {
               enumDescriptions: [
                 "Results include both administrator-only and domain-public fields for the user.",
@@ -763,6 +799,12 @@ const document = {
                 "Email or immutable ID of the user if only those groups are to be listed, the given user is a member of. If it's an ID, it should match with the ID of the user object. Cannot be used with the `customer` parameter.",
               location: "query",
               type: "string",
+            },
+            query: {
+              type: "string",
+              description:
+                "Query string search. Contains one or more search clauses, each with a field, operator, and value. For complete documentation, go to [Search for groups](https://developers.google.com/workspace/admin/directory/v1/guides/search-groups).",
+              location: "query",
             },
           },
           parameterOrder: [],
