@@ -52,6 +52,15 @@ function page<T>(c: Context, items: T[], defaultMax: number, max: number): { ite
   return { items: slice, ...(next ? { nextPageToken: next } : {}) };
 }
 
+// users.list parameters the emulator does not model: search queries, deleted users, watch events and custom schemas.
+function unsupportedUserListParameter(c: Context): string | undefined {
+  if (c.req.query("query") !== undefined) return "query";
+  if (c.req.query("showDeleted") === "true") return "showDeleted";
+  if (c.req.query("event") !== undefined) return "event";
+  if (c.req.query("customFieldMask")) return "customFieldMask";
+  return undefined;
+}
+
 function bool(value: unknown): boolean | undefined {
   if (typeof value === "boolean") return value;
   if (value === "true") return true;
@@ -132,7 +141,8 @@ export function adminDirectoryRoutes({ app, store, baseUrl }: RouteContext): voi
   app.get(`${PREFIX}/users`, (c) => {
     const admin = requireAdmin(c);
     if (admin instanceof Response) return admin;
-    if (c.req.query("query") !== undefined) return badRequest(c, "Invalid Input: query is not supported");
+    const unsupported = unsupportedUserListParameter(c);
+    if (unsupported) return badRequest(c, `Invalid Input: ${unsupported} is not supported by the emulator`);
     const inScope = customerScope(c);
     if (inScope instanceof Response) return inScope;
     const orderBy = c.req.query("orderBy") ?? "email";

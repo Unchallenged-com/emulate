@@ -172,6 +172,11 @@ describe("Google Admin SDK Directory API", () => {
     expect(missing.status).toBe(404);
     expect(await missing.json()).toMatchObject({ error: { errors: [{ reason: "notFound" }] } });
     expect((await request(`${directory}/users`, auth)).status).toBe(400);
+    expect((await request(`${directory}/users?customer=my_customer&showDeleted=false`, auth)).status).toBe(200);
+    for (const unsupported of ["showDeleted=true", "query=isSuspended%3Dtrue", "event=add", "customFieldMask=hr"]) {
+      const response = await request(`${directory}/users?customer=my_customer&${unsupported}`, auth);
+      expect(response.status, unsupported).toBe(400);
+    }
     expect((await request(`${directory}/users?customer=C0other`, auth)).status).toBe(400);
     expect((await request(`${directory}/users?domain=other.example`, auth)).status).toBe(400);
   });
