@@ -77,6 +77,14 @@ npm install @emulators/google
 - `PUT /drive/v3/files/:fileId` — update file content
 - `POST /upload/drive/v3/files` — upload file
 
+### Directory
+- `GET /discovery/v1/apis/admin/directory_v1/rest`, `GET /$discovery/rest?version=directory_v1` — Directory API discovery document
+- `GET|POST /admin/directory/v1/users`, `GET|PUT|PATCH|DELETE /admin/directory/v1/users/:userKey` — users
+- `GET|POST /admin/directory/v1/groups`, `GET|PUT|PATCH|DELETE /admin/directory/v1/groups/:groupKey` — groups
+- `GET|POST /admin/directory/v1/groups/:groupKey/members`, `GET|PUT|PATCH|DELETE /admin/directory/v1/groups/:groupKey/members/:memberKey`, `GET /admin/directory/v1/groups/:groupKey/hasMember/:memberKey` — group members
+
+Admin SDK Directory API: users, groups, and group members under `/admin/directory/v1`, with the discovery document at `/discovery/v1/apis/admin/directory_v1/rest` and `/$discovery/rest?version=directory_v1`. The account's users are those of a hosted domain; `customer=my_customer` or the `google.customer_id` seed value selects them. A seeded user with `is_admin: true` is a super administrator, and a user with `suspended: true` (seeded, or set through `users.update`) cannot sign in. With `google.strict_scopes: true`, Directory calls need the method's `admin.directory.*` scope and a super administrator, and other users get `403` with `forbidden`. Responses honor the `fields` parameter. Search queries, batch requests, aliases, organizational units, renaming, and delegated administrator roles are not modeled.
+
 ## Auth
 
 Refresh-token grants also return an RS256-signed `id_token` for the same user and client. The existing refresh token remains reusable.

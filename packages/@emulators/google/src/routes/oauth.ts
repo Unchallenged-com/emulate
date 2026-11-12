@@ -239,9 +239,19 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
     const code_challenge = bodyStr(body.code_challenge);
     const code_challenge_method = bodyStr(body.code_challenge_method);
 
+    // A suspended user is blocked from the organization's Google services
+    // (https://knowledge.workspace.google.com/admin/users/suspend-a-user-temporarily), so signing in fails.
+    const user = gs.users.findOneBy("email", email as GoogleUser["email"]);
+    if (user?.suspended === true) {
+      return c.html(
+        renderErrorPage("Account suspended", "This account has been suspended by an administrator.", SERVICE_LABEL),
+        403,
+      );
+    }
+
     // A user assigned to an SSO profile signs in at the profile's identity provider first: Google
     // sends it an unsigned AuthnRequest with the HTTP POST binding, then returns to this page.
-    const profile = ssoProfileForUser(store, gs.users.findOneBy("email", email as GoogleUser["email"]));
+    const profile = ssoProfileForUser(store, user);
     if (profile && getWebSessionUser(store, c)?.email !== email) {
       const params = new URLSearchParams();
       const fields = { client_id, redirect_uri, scope, state, nonce, code_challenge, code_challenge_method };
@@ -256,6 +266,7 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
         ),
       );
     }
+    if (user) gs.users.update(user.id, { last_login_time: new Date().toISOString() });
 
     const code = randomBytes(20).toString("hex");
 

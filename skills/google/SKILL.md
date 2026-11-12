@@ -122,6 +122,7 @@ google:
     - email: admin@acme.com
       name: Admin
       hd: acme.com
+      is_admin: true
   oauth_clients:
     - client_id: my-client-id.apps.googleusercontent.com
       client_secret: GOCSPX-secret
@@ -182,7 +183,7 @@ google:
 
 When no OAuth clients are configured, the emulator accepts any `client_id`. With clients configured, strict validation is enforced for `client_id`, `client_secret`, and `redirect_uri`.
 
-Google authentication is permissive by default for local bearer-token workflows. Set `google.strict_scopes: true` in seed config to require emulator-issued, unexpired access tokens on Gmail, Calendar, Drive, and userinfo routes. Invalid credentials return `401 UNAUTHENTICATED`; missing method scopes return `403` with `insufficientPermissions`. Strict mode distinguishes read, write, send, settings, and metadata scopes, and userinfo includes only granted identity claims. Revoking an access or refresh token invalidates the linked access and refresh credentials. Discovery, signing keys, and the sign-in page remain public. This mode checks method scopes; resource-specific grants such as `drive.file` and Gmail add-on scopes are not modeled.
+Google authentication is permissive by default for local bearer-token workflows. Set `google.strict_scopes: true` in seed config to require emulator-issued, unexpired access tokens on Gmail, Calendar, Drive, Directory, and userinfo routes. Invalid credentials return `401 UNAUTHENTICATED`; missing method scopes return `403` with `insufficientPermissions`. Strict mode distinguishes read, write, send, settings, and metadata scopes, and userinfo includes only granted identity claims. Revoking an access or refresh token invalidates the linked access and refresh credentials. Discovery, signing keys, and the sign-in page remain public. This mode checks method scopes; resource-specific grants such as `drive.file` and Gmail add-on scopes are not modeled.
 
 Set `google.sso_profiles` to sign users in with a third-party SAML identity provider. Each profile has an `id`, the identity provider's `sign_in_page_url`, one or two RSA verification `certificates` (PEM), optional `idp_entity_id` and `sign_out_page_url`, and the primary emails of the `users` it is assigned to (Google assigns profiles to organizational units or groups, which the emulator does not model). The profile's entity ID is `<base URL>/samlrp/<id>` and its ACS URL is `<base URL>/samlrp/<id>/acs`. Picking an assigned user on `/o/oauth2/v2/auth` posts an unsigned AuthnRequest to the sign-in page URL with the HTTP POST binding. The ACS accepts an assertion signed with RSA-SHA256 by a profile certificate, whose `emailAddress` NameID is the user's primary email (case-sensitive), with the ACS URL as Recipient and a `NotOnOrAfter` on its bearer subject confirmation, the entity ID as Audience, the ACS URL as Destination when one is set, the `idp_entity_id` as Issuer when the profile sets one, and that answers a request the emulator sent to the same browser: identity-provider-initiated responses are refused with `403`, as Google does not support them. Starting a sign-in sets a `_emu_google_sso_browser` cookie (`SameSite=Lax`) that the ACS requires; a cross-site post without it is posted again from the emulator's origin once. A valid response opens a 14-day web session, and the authorization page then authorizes only the signed-in user. Users without a profile and super administrators (`is_admin: true` on a seeded user) keep the user picker.
 
@@ -579,6 +580,38 @@ curl -X PATCH "http://localhost:4002/drive/v3/files/drv_readme?addParents=folder
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name": "README-updated.md"}'
+```
+
+## Google Admin SDK Directory API
+
+Admin SDK Directory API: users, groups, and group members under `/admin/directory/v1`, with the discovery document at `/discovery/v1/apis/admin/directory_v1/rest` and `/$discovery/rest?version=directory_v1`. The account's users are those of a hosted domain; `customer=my_customer` or the `google.customer_id` seed value selects them. A seeded user with `is_admin: true` is a super administrator, and a user with `suspended: true` (seeded, or set through `users.update`) cannot sign in. With `google.strict_scopes: true`, Directory calls need the method's `admin.directory.*` scope and a super administrator, and other users get `403` with `forbidden`. Responses honor the `fields` parameter. Search queries, batch requests, aliases, organizational units, renaming, and delegated administrator roles are not modeled.
+
+```bash
+# Create a user (needs admin.directory.user and a super administrator in strict mode)
+curl -X POST http://localhost:4002/admin/directory/v1/users \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"primaryEmail": "nina@acme.com", "name": {"givenName": "Nina", "familyName": "Martin"}, "password": "correct-horse-battery"}'
+
+# List the account's users, with a partial response
+curl "http://localhost:4002/admin/directory/v1/users?customer=my_customer&fields=users(primaryEmail,suspended)" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Suspend a user: they can no longer sign in
+curl -X PUT http://localhost:4002/admin/directory/v1/users/nina@acme.com \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"suspended": true}'
+
+# Create a group and add a member
+curl -X POST http://localhost:4002/admin/directory/v1/groups \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"email": "nurses@acme.com", "name": "Nurses"}'
+curl -X POST http://localhost:4002/admin/directory/v1/groups/nurses@acme.com/members \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"email": "nina@acme.com", "role": "MEMBER"}'
 ```
 
 ## Common Patterns
