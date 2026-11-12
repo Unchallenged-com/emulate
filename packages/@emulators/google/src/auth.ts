@@ -1,5 +1,6 @@
 import type { AppEnv, Hono, MiddlewareHandler, Store } from "@emulators/core";
 import { directoryRouteScopes } from "./directory-discovery.js";
+import { GROUPS_SETTINGS_SCOPES } from "./groups-settings-discovery.js";
 import { directoryAuthError } from "./directory.js";
 import { googleApiError } from "./helpers.js";
 import { getAccessTokens } from "./oauth-tokens.js";
@@ -98,7 +99,10 @@ export function googleAuthMiddleware(app: Hono<AppEnv>, store: Store): Middlewar
     const route = app.matchedRoute(c.req.method, c.req.path);
     if (!route) return next();
     const path = route.path.replace(/^\/upload\//, "/");
-    if (!/^\/(gmail\/v1|drive\/v3|calendar\/v3|admin\/directory\/v1)\//.test(path) && path !== "/oauth2/v2/userinfo") {
+    if (
+      !/^\/(gmail\/v1|drive\/v3|calendar\/v3|admin\/directory\/v1|groups\/v1\/groups)\//.test(path) &&
+      path !== "/oauth2/v2/userinfo"
+    ) {
       return next();
     }
 
@@ -106,13 +110,16 @@ export function googleAuthMiddleware(app: Hono<AppEnv>, store: Store): Middlewar
     const record = token ? getAccessTokens(store).get(token) : undefined;
     const user = record && getGoogleStore(store).users.findOneBy("email", record.email);
     if (!token || !record || record.expiresAt <= Date.now() || !user) {
-      if (path.startsWith("/admin/directory/v1/")) {
+      if (path.startsWith("/admin/directory/v1/") || path.startsWith("/groups/v1/groups/")) {
         return directoryAuthError(c);
       }
       return googleApiError(c, 401, "Request had invalid authentication credentials.", "authError", "UNAUTHENTICATED");
     }
 
-    let required = routeScopes[`${route.method} ${path}`] ?? directoryRouteScopes[`${route.method} ${path}`] ?? [];
+    let required =
+      routeScopes[`${route.method} ${path}`] ??
+      directoryRouteScopes[`${route.method} ${path}`] ??
+      (path.startsWith("/groups/v1/groups/") ? GROUPS_SETTINGS_SCOPES : []);
     if (route.method === "GET" && path === "/drive/v3/files/:fileId" && c.req.query("alt") === "media") {
       required = driveContent;
     }
