@@ -104,7 +104,7 @@ Google Admin SDK Directory:
 
 Google OIDC:
   Refresh-token grants return an access token and an RS256-signed ID token.
-  The token endpoint accepts client credentials in the body or an HTTP Basic header (client_secret_basic).
+  The token endpoint accepts client credentials in the body or an HTTP Basic header (client_secret_basic); with OAuth clients configured, both return 400 invalid_request.
   Discovery advertises RS256 ID tokens. GET /oauth2/v3/certs returns JWKS; GET /oauth2/v1/certs returns matching PEM X.509 certificates.
   Both certificate endpoints advertise a one-hour cache lifetime. Signing keys do not rotate during the process lifetime.
   Set google.strict_scopes: true in seed config to validate issued access tokens, expiry, revocation, and method scopes.
