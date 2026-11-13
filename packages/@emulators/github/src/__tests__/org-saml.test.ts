@@ -248,6 +248,12 @@ describe("GitHub organization SAML response", () => {
     );
   });
 
+  it("refuses an assertion whose bearer subject confirmation has no NotOnOrAfter", async () => {
+    const html = await expectRefused((requestId) => buildResponse({ requestId, confirmationNotOnOrAfter: null }));
+    expect(html).toContain("SubjectConfirmationData has no NotOnOrAfter");
+    await expectRefused((requestId) => buildResponse({ requestId, sign: "response", confirmationNotOnOrAfter: null }));
+  });
+
   it("refuses a response that is not yet valid", async () => {
     await expectRefused((requestId) =>
       buildResponse({
