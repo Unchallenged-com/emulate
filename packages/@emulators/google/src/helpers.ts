@@ -710,8 +710,9 @@ export function sendDraftMessage(gs: GoogleStore, draft: GoogleDraft): GoogleMes
 /**
  * Delivers a sent message the way `users.messages.send` documents it: "Sends the specified message to the recipients
  * in the To, Cc, and Bcc headers." Each recipient who is a user of the emulator gets a copy in their own mailbox,
- * labeled `INBOX` and `UNREAD` like a received message, without the `Bcc` header. Returns the recipients who are not
- * users of the emulator, and the message as they should receive it.
+ * labeled `INBOX` and `UNREAD` like a received message, without the `Bcc` header. When the sender is a recipient, the
+ * sent message itself gets `INBOX` and `UNREAD` instead of a second copy, as Gmail shows a message sent to oneself.
+ * Returns the recipients who are not users of the emulator, and the message as they should receive it.
  */
 export function deliverSentMessage(gs: GoogleStore, message: GoogleMessage): { outside: string[]; raw: string | null } {
   const sender = message.user_email.toLowerCase();
@@ -725,7 +726,10 @@ export function deliverSentMessage(gs: GoogleStore, message: GoogleMessage): { o
       others.push(address);
       continue;
     }
-    if (address === sender) continue;
+    if (address === sender) {
+      markMessageModified(gs, message, [...message.label_ids, "INBOX", "UNREAD"]);
+      continue;
+    }
 
     createStoredMessage(gs, {
       user_email: recipient,

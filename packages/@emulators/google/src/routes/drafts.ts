@@ -62,12 +62,13 @@ export function draftRoutes({ app, store }: RouteContext): void {
       return googleApiError(c, 404, "Requested entity was not found.", "notFound", "NOT_FOUND");
     }
 
-    const message = sendDraftMessage(gs, draft);
-    if (!message) {
+    const sent = sendDraftMessage(gs, draft);
+    if (!sent) {
       return googleApiError(c, 404, "Requested entity was not found.", "notFound", "NOT_FOUND");
     }
-    const { outside, raw } = deliverSentMessage(gs, message);
-    if (raw) relaySentMessage(store, message, outside, raw);
+    const { outside, raw } = deliverSentMessage(gs, sent);
+    if (raw) relaySentMessage(store, sent, outside, raw);
+    const message = gs.messages.get(sent.id) ?? sent;
 
     return c.json({
       id: message.gmail_id,

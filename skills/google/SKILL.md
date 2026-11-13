@@ -375,7 +375,7 @@ curl http://localhost:4002/gmail/v1/users/me/messages/msg_id/attachments/att_id 
 
 Upload variants also available at `/upload/gmail/v1/users/:userId/messages`, `.../messages/send`, `.../messages/import`.
 
-Sending a message or a draft delivers a copy to each recipient in its `To`, `Cc`, and `Bcc` headers who is a user of the emulator, labeled `INBOX` and `UNREAD`, without the `Bcc` header. Set `google.smtp_relay` (`host`, optional `port` and `helo`) in seed config to hand the message to an SMTP server for the other recipients, with the sender's address as the envelope sender, the way Gmail reaches recipients outside Google; delivery happens after the API answers, and failures are only logged.
+Sending a message or a draft delivers a copy to each recipient in its `To`, `Cc`, and `Bcc` headers who is a user of the emulator, labeled `INBOX` and `UNREAD`, without the `Bcc` header. When the sender is a recipient, the sent message itself is labeled `INBOX` and `UNREAD` instead of a second copy. Set `google.smtp_relay` (`host`, optional `port` and `helo`) in seed config to hand the message to an SMTP server for the other recipients, with the sender's address as the envelope sender, the way Gmail reaches recipients outside Google; delivery happens after the API answers, and failures are only logged.
 
 ### Drafts
 
