@@ -109,6 +109,8 @@ Google OIDC:
   Both certificate endpoints advertise a one-hour cache lifetime. Signing keys do not rotate during the process lifetime.
   Set google.strict_scopes: true in seed config to validate issued access tokens, expiry, revocation, and method scopes.
   Strict mode returns Google-style 401/403 errors and limits userinfo claims; bearer-token defaults remain permissive.
+  POST /oauth2/token accepts service account assertions (JWT bearer grant); seed google.service_accounts and
+  google.domain_wide_delegation to issue tokens acting as a user (sub) for the delegated scopes.
 
 Google SAML single sign-on:
   Set google.sso_profiles (id, sign_in_page_url, certificates, users) to sign assigned users in with a SAML identity provider.
