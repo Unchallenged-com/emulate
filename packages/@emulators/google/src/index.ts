@@ -24,6 +24,11 @@ import { settingsRoutes } from "./routes/settings.js";
 import { threadRoutes } from "./routes/threads.js";
 import { getGoogleStore } from "./store.js";
 import { setSmtpRelay, type GoogleSmtpRelayConfig } from "./smtp-relay.js";
+import {
+  seedServiceAccounts,
+  type GoogleDomainWideDelegationSeed,
+  type GoogleServiceAccountSeed,
+} from "./service-accounts.js";
 import { googleAuthMiddleware } from "./auth.js";
 import { samlRoutes } from "./routes/saml.js";
 import { seedSsoProfiles, type GoogleSsoProfileSeed } from "./saml.js";
@@ -32,6 +37,7 @@ export { getGoogleStore, type GoogleStore } from "./store.js";
 export * from "./entities.js";
 export type { GoogleSsoProfileSeed } from "./saml.js";
 export type { GoogleSmtpRelayConfig } from "./smtp-relay.js";
+export type { GoogleDomainWideDelegationSeed, GoogleServiceAccountSeed } from "./service-accounts.js";
 
 export interface GoogleSeedUser {
   email: string;
@@ -133,6 +139,10 @@ export interface GoogleSeedConfig {
   customer_id?: string;
   /** An SMTP server that receives sent messages for recipients who are not users of the emulator. */
   smtp_relay?: GoogleSmtpRelayConfig;
+  /** Service accounts that obtain tokens with the JWT bearer grant. */
+  service_accounts?: GoogleServiceAccountSeed[];
+  /** Domain-wide delegation: the client IDs of service accounts allowed to act as the domain's users, with their scopes. */
+  domain_wide_delegation?: GoogleDomainWideDelegationSeed[];
   users?: GoogleSeedUser[];
   oauth_clients?: Array<{
     client_id: string;
@@ -322,6 +332,7 @@ export function seedFromConfig(store: Store, _baseUrl: string, config: GoogleSee
   if (config.smtp_relay) {
     setSmtpRelay(store, config.smtp_relay);
   }
+  seedServiceAccounts(store, config.service_accounts, config.domain_wide_delegation);
 
   if (config.users) {
     for (const user of config.users) {
