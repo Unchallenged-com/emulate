@@ -1067,6 +1067,8 @@ google:
 
 `/oauth2/v1/certs` returns X.509 certificates, matching [Google's PEM endpoint](https://www.googleapis.com/oauth2/v1/certs). Each certificate contains the same public key published under its key ID in `/oauth2/v3/certs`. Both endpoints are public and return `Cache-Control`, `Date`, and `Expires` headers with a one-hour cache lifetime. The emulator uses a locally generated, self-signed certificate valid for one year and a signing key fixed for the process lifetime; Google's periodic key rotation is not emulated.
 
+Sending a message or a draft delivers a copy to each recipient in its `To`, `Cc`, and `Bcc` headers who is a user of the emulator, labeled `INBOX` and `UNREAD`, without the `Bcc` header.
+
 - `GET /o/oauth2/v2/auth` - authorization endpoint
 - `POST /oauth2/token` - token exchange
 - `GET /oauth2/v2/userinfo` - get user info
