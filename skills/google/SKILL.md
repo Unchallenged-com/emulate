@@ -205,7 +205,7 @@ google:
       users: [alice@acme.com, admin@acme.com]
 ```
 
-The token endpoint also accepts a service account's signed assertion (`grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`). Seed `google.service_accounts` (`client_email`, `client_id`, and `keys` with an `id` and a PEM `public_key`) and `google.domain_wide_delegation` (`client_id`, `scopes`); an assertion whose `sub` names a user gets a token acting as that user when domain-wide delegation grants the account every requested scope, and Google's `invalid_grant`, `invalid_scope`, and `unauthorized_client` errors otherwise.
+The token endpoint also accepts a service account's signed assertion (`grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer`). Seed `google.service_accounts` (`client_email`, `client_id`, and `keys` with an `id` and a PEM `public_key`) and `google.domain_wide_delegation` (`client_id`, `scopes`); an assertion whose `sub` names a user gets a token acting as that user when domain-wide delegation grants the account every requested scope, and Google's `invalid_grant`, `invalid_scope`, `unauthorized_client` (client not authorized for delegation), and `access_denied` (a requested scope not delegated) errors otherwise.
 
 ### Hosted domain (hd) claim
 
