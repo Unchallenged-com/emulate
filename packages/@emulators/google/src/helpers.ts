@@ -711,9 +711,9 @@ export function sendDraftMessage(gs: GoogleStore, draft: GoogleDraft): GoogleMes
  * Delivers a sent message the way `users.messages.send` documents it: "Sends the specified message to the recipients
  * in the To, Cc, and Bcc headers." Each recipient who is a user of the emulator gets a copy in their own mailbox,
  * labeled `INBOX` and `UNREAD` like a received message, without the `Bcc` header. Returns the recipients who are not
- * users of the emulator.
+ * users of the emulator, and the message as they should receive it.
  */
-export function deliverSentMessage(gs: GoogleStore, message: GoogleMessage): string[] {
+export function deliverSentMessage(gs: GoogleStore, message: GoogleMessage): { outside: string[]; raw: string | null } {
   const sender = message.user_email.toLowerCase();
   const users = new Map(gs.users.all().map((user) => [user.email.toLowerCase(), user.email]));
   const raw = message.raw ? removeBccHeader(message.raw) : null;
@@ -735,7 +735,7 @@ export function deliverSentMessage(gs: GoogleStore, message: GoogleMessage): str
     });
   }
 
-  return others;
+  return { outside: others, raw };
 }
 
 /** The addresses of RFC 5322 address lists (`Name <a@example.com>, b@example.com`), lowercased, each once. */

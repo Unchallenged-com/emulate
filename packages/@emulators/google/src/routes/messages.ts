@@ -22,6 +22,7 @@ import {
 } from "../helpers.js";
 import { getStringArray, parseGoogleBody, parseMessageInputFromBody, requireGmailUser } from "../route-helpers.js";
 import { getGoogleStore } from "../store.js";
+import { relaySentMessage } from "../smtp-relay.js";
 
 export function messageRoutes({ app, store }: RouteContext): void {
   const gs = getGoogleStore(store);
@@ -71,7 +72,10 @@ export function messageRoutes({ app, store }: RouteContext): void {
         ...messageInput,
         label_ids: defaultLabelIds,
       });
-      if (mode === "send") deliverSentMessage(gs, message);
+      if (mode === "send") {
+        const { outside, raw } = deliverSentMessage(gs, message);
+        if (raw) relaySentMessage(store, message, outside, raw);
+      }
 
       return c.json(formatMessageResource(gs, message, "full"));
     } catch {

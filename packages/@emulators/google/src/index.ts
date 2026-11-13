@@ -23,6 +23,7 @@ import { setCustomerId } from "./directory.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { threadRoutes } from "./routes/threads.js";
 import { getGoogleStore } from "./store.js";
+import { setSmtpRelay, type GoogleSmtpRelayConfig } from "./smtp-relay.js";
 import { googleAuthMiddleware } from "./auth.js";
 import { samlRoutes } from "./routes/saml.js";
 import { seedSsoProfiles, type GoogleSsoProfileSeed } from "./saml.js";
@@ -30,6 +31,7 @@ import { seedSsoProfiles, type GoogleSsoProfileSeed } from "./saml.js";
 export { getGoogleStore, type GoogleStore } from "./store.js";
 export * from "./entities.js";
 export type { GoogleSsoProfileSeed } from "./saml.js";
+export type { GoogleSmtpRelayConfig } from "./smtp-relay.js";
 
 export interface GoogleSeedUser {
   email: string;
@@ -129,6 +131,8 @@ export interface GoogleSeedConfig {
   strict_scopes?: boolean;
   /** The Directory API's `customerId` of the account; generated when not set. */
   customer_id?: string;
+  /** An SMTP server that receives sent messages for recipients who are not users of the emulator. */
+  smtp_relay?: GoogleSmtpRelayConfig;
   users?: GoogleSeedUser[];
   oauth_clients?: Array<{
     client_id: string;
@@ -314,6 +318,9 @@ export function seedFromConfig(store: Store, _baseUrl: string, config: GoogleSee
   }
   if (config.customer_id) {
     setCustomerId(store, config.customer_id);
+  }
+  if (config.smtp_relay) {
+    setSmtpRelay(store, config.smtp_relay);
   }
 
   if (config.users) {
