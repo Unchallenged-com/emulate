@@ -23,6 +23,7 @@ import {
   requireGmailUser,
 } from "../route-helpers.js";
 import { getGoogleStore } from "../store.js";
+import { relaySentMessage } from "../smtp-relay.js";
 
 export function draftRoutes({ app, store }: RouteContext): void {
   const gs = getGoogleStore(store);
@@ -65,7 +66,8 @@ export function draftRoutes({ app, store }: RouteContext): void {
     if (!message) {
       return googleApiError(c, 404, "Requested entity was not found.", "notFound", "NOT_FOUND");
     }
-    deliverSentMessage(gs, message);
+    const { outside, raw } = deliverSentMessage(gs, message);
+    if (raw) relaySentMessage(store, message, outside, raw);
 
     return c.json({
       id: message.gmail_id,

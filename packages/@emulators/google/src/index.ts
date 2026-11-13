@@ -20,10 +20,12 @@ import { oauthRoutes } from "./routes/oauth.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { threadRoutes } from "./routes/threads.js";
 import { getGoogleStore } from "./store.js";
+import { setSmtpRelay, type GoogleSmtpRelayConfig } from "./smtp-relay.js";
 import { googleAuthMiddleware } from "./auth.js";
 
 export { getGoogleStore, type GoogleStore } from "./store.js";
 export * from "./entities.js";
+export type { GoogleSmtpRelayConfig } from "./smtp-relay.js";
 
 export interface GoogleSeedUser {
   email: string;
@@ -116,6 +118,8 @@ export interface GoogleSeedDriveItem {
 export interface GoogleSeedConfig {
   port?: number;
   strict_scopes?: boolean;
+  /** An SMTP server that receives sent messages for recipients who are not users of the emulator. */
+  smtp_relay?: GoogleSmtpRelayConfig;
   users?: GoogleSeedUser[];
   oauth_clients?: Array<{
     client_id: string;
@@ -297,6 +301,9 @@ export function seedFromConfig(store: Store, _baseUrl: string, config: GoogleSee
   const gs = getGoogleStore(store);
   if (config.strict_scopes !== undefined) {
     store.setData("google.strict_scopes", config.strict_scopes);
+  }
+  if (config.smtp_relay) {
+    setSmtpRelay(store, config.smtp_relay);
   }
 
   if (config.users) {
