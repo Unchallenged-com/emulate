@@ -105,6 +105,9 @@ const document = {
         "https://www.googleapis.com/auth/admin.directory.user.readonly": {
           description: "See info about users on your domain",
         },
+        "https://www.googleapis.com/auth/admin.directory.user.security": {
+          description: "Manage data access permissions for users on your domain",
+        },
         "https://www.googleapis.com/auth/cloud-platform": {
           description:
             "See, edit, configure, and delete your Google Cloud data and see the email address for your Google Account.",
@@ -492,6 +495,74 @@ const document = {
         },
       },
       id: "MembersHasMember",
+      type: "object",
+    },
+    Token: {
+      type: "object",
+      description: "JSON template for token resource in Directory API.",
+      properties: {
+        kind: {
+          default: "admin#directory#token",
+          type: "string",
+          description: "The type of the API resource. This is always `admin#directory#token`.",
+        },
+        anonymous: {
+          type: "boolean",
+          description:
+            "Whether the application is registered with Google. The value is `true` if the application has an anonymous Client ID.",
+        },
+        displayText: {
+          description: "The displayable name of the application the token is issued to.",
+          type: "string",
+        },
+        etag: {
+          description: "ETag of the resource.",
+          type: "string",
+        },
+        nativeApp: {
+          type: "boolean",
+          description:
+            "Whether the token is issued to an installed application. The value is `true` if the application is installed to a desktop or mobile device.",
+        },
+        userKey: {
+          description: "The unique ID of the user that issued the token.",
+          type: "string",
+        },
+        scopes: {
+          items: {
+            type: "string",
+          },
+          type: "array",
+          description: "A list of authorization scopes the application is granted.",
+        },
+        clientId: {
+          type: "string",
+          description: "The Client ID of the application the token is issued to.",
+        },
+      },
+      id: "Token",
+    },
+    Tokens: {
+      id: "Tokens",
+      description: "JSON response template for List tokens operation in Directory API.",
+      properties: {
+        etag: {
+          description: "ETag of the resource.",
+          type: "string",
+        },
+        kind: {
+          default: "admin#directory#tokenList",
+          description: "The type of the API resource. This is always `admin#directory#tokenList`.",
+          type: "string",
+        },
+        items: {
+          type: "array",
+          description: "A list of Token resources.",
+          items: {
+            $ref: "Token",
+          },
+        },
+      },
       type: "object",
     },
   },
@@ -1181,6 +1252,82 @@ const document = {
           httpMethod: "DELETE",
           path: "admin/directory/v1/groups/{groupKey}/members/{memberKey}",
           description: "Removes a member from a group.",
+        },
+      },
+    },
+    tokens: {
+      methods: {
+        get: {
+          flatPath: "admin/directory/v1/users/{userKey}/tokens/{clientId}",
+          path: "admin/directory/v1/users/{userKey}/tokens/{clientId}",
+          parameters: {
+            userKey: {
+              location: "path",
+              type: "string",
+              description:
+                "Identifies the user in the API request. The value can be the user's primary email address, alias email address, or unique user ID.",
+              required: true,
+            },
+            clientId: {
+              required: true,
+              description: "The Client ID of the application the token is issued to.",
+              type: "string",
+              location: "path",
+            },
+          },
+          description: "Gets information about an access token issued by a user.",
+          parameterOrder: ["userKey", "clientId"],
+          id: "directory.tokens.get",
+          scopes: ["https://www.googleapis.com/auth/admin.directory.user.security"],
+          httpMethod: "GET",
+          response: {
+            $ref: "Token",
+          },
+        },
+        delete: {
+          httpMethod: "DELETE",
+          scopes: ["https://www.googleapis.com/auth/admin.directory.user.security"],
+          path: "admin/directory/v1/users/{userKey}/tokens/{clientId}",
+          parameterOrder: ["userKey", "clientId"],
+          flatPath: "admin/directory/v1/users/{userKey}/tokens/{clientId}",
+          id: "directory.tokens.delete",
+          parameters: {
+            userKey: {
+              required: true,
+              type: "string",
+              location: "path",
+              description:
+                "Identifies the user in the API request. The value can be the user's primary email address, alias email address, or unique user ID.",
+            },
+            clientId: {
+              required: true,
+              type: "string",
+              location: "path",
+              description: "The Client ID of the application the token is issued to.",
+            },
+          },
+          description: "Deletes all access tokens issued by a user for an application.",
+        },
+        list: {
+          httpMethod: "GET",
+          id: "directory.tokens.list",
+          path: "admin/directory/v1/users/{userKey}/tokens",
+          flatPath: "admin/directory/v1/users/{userKey}/tokens",
+          parameterOrder: ["userKey"],
+          description: "Returns the set of tokens specified user has issued to 3rd party applications.",
+          scopes: ["https://www.googleapis.com/auth/admin.directory.user.security"],
+          response: {
+            $ref: "Tokens",
+          },
+          parameters: {
+            userKey: {
+              location: "path",
+              type: "string",
+              required: true,
+              description:
+                "Identifies the user in the API request. The value can be the user's primary email address, alias email address, or unique user ID.",
+            },
+          },
         },
       },
     },

@@ -4,6 +4,7 @@ import {
   directoryAuthError,
   directoryUsers,
   emailDomain,
+  etagOf,
   findGroupByKey,
   findMember,
   findUserByKey,
@@ -16,10 +17,12 @@ import {
   parseFieldSelector,
   removeMemberships,
   selectFields,
+  tokenResource,
   userResource,
 } from "../directory.js";
 import type { GoogleGroup, GoogleGroupMember, GoogleUser } from "../entities.js";
 import { getAuthenticatedEmail, googleApiError } from "../helpers.js";
+import { clientGrants, revokeClientTokens } from "../oauth-tokens.js";
 import { parseGoogleBody } from "../route-helpers.js";
 import { getGoogleStore } from "../store.js";
 
@@ -54,6 +57,8 @@ const conditionNotMet = (c: Context, message: string) =>
 const USER_NOT_FOUND = "Resource Not Found: userKey";
 const GROUP_NOT_FOUND = "Resource Not Found: groupKey";
 const MEMBER_NOT_FOUND = "Resource Not Found: memberKey";
+// No answer for a client the user granted nothing was found; the emulator's own, in the form of the others.
+const TOKEN_NOT_FOUND = "Resource Not Found: clientId";
 
 function json(c: Context, body: unknown): Response {
   return c.json(selectFields(body, parseFieldSelector(c.req.query("fields") ?? "")));
@@ -110,7 +115,7 @@ function passwordProblem(password: string, hashFunction: string | undefined): st
   return "Invalid Input: hashFunction";
 }
 
-export function adminDirectoryRoutes({ app, store, baseUrl }: RouteContext): void {
+export function adminDirectoryRoutes({ app, store, baseUrl, tokenMap }: RouteContext): void {
   const gs = getGoogleStore(store);
 
   const discovery = (c: Context) => c.json(buildDirectoryDiscoveryDocument(baseUrl));
@@ -291,6 +296,43 @@ export function adminDirectoryRoutes({ app, store, baseUrl }: RouteContext): voi
     if (!user) return notFound(c, USER_NOT_FOUND);
     removeMemberships(store, user.uid);
     gs.users.delete(user.id);
+    return empty(c);
+  });
+
+  // ---------- Tokens ----------
+  // The tokens a user issued to applications, one per client: the authorization code grants the emulator holds.
+
+  app.get(`${PREFIX}/users/:userKey/tokens`, (c) => {
+    const admin = requireAdmin(c);
+    if (admin instanceof Response) return admin;
+    const user = findUserByKey(gs, c.req.param("userKey") ?? "");
+    if (!user) return notFound(c, USER_NOT_FOUND);
+    const items = [...clientGrants(store, user.email)]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([clientId, scopes]) => tokenResource(gs, user, clientId, scopes));
+    return json(c, { kind: "admin#directory#tokenList", etag: etagOf(items), items });
+  });
+
+  app.get(`${PREFIX}/users/:userKey/tokens/:clientId`, (c) => {
+    const admin = requireAdmin(c);
+    if (admin instanceof Response) return admin;
+    const user = findUserByKey(gs, c.req.param("userKey") ?? "");
+    if (!user) return notFound(c, USER_NOT_FOUND);
+    const clientId = c.req.param("clientId") ?? "";
+    const scopes = clientGrants(store, user.email).get(clientId);
+    if (!scopes) return notFound(c, TOKEN_NOT_FOUND);
+    return json(c, tokenResource(gs, user, clientId, scopes));
+  });
+
+  // "Deletes all access tokens issued by a user for an application."
+  // (https://developers.google.com/workspace/admin/directory/reference/rest/v1/tokens/delete) A token here is the
+  // grant the list shows, one per application with its scopes, so its refresh tokens end with it.
+  app.delete(`${PREFIX}/users/:userKey/tokens/:clientId`, (c) => {
+    const admin = requireAdmin(c);
+    if (admin instanceof Response) return admin;
+    const user = findUserByKey(gs, c.req.param("userKey") ?? "");
+    if (!user) return notFound(c, USER_NOT_FOUND);
+    revokeClientTokens(store, tokenMap, user.email, c.req.param("clientId") ?? "");
     return empty(c);
   });
 
