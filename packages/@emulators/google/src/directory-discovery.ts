@@ -827,6 +827,25 @@ const document = {
             },
           },
         },
+        signOut: {
+          parameters: {
+            userKey: {
+              required: true,
+              description:
+                "Identifies the target user in the API request. The value can be the user's primary email address, alias email address, or unique user ID.",
+              location: "path",
+              type: "string",
+            },
+          },
+          flatPath: "admin/directory/v1/users/{userKey}/signOut",
+          parameterOrder: ["userKey"],
+          description:
+            "Signs a user out of all web and device sessions and reset their sign-in cookies. User will have to sign in by authenticating again.",
+          path: "admin/directory/v1/users/{userKey}/signOut",
+          scopes: ["https://www.googleapis.com/auth/admin.directory.user.security"],
+          httpMethod: "POST",
+          id: "directory.users.signOut",
+        },
       },
     },
     groups: {
