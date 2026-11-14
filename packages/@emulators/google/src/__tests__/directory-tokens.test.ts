@@ -6,11 +6,26 @@ const base = "http://localhost:4000";
 const directory = "/admin/directory/v1";
 const scope = (name: string) => `https://www.googleapis.com/auth/${name}`;
 const security = scope("admin.directory.user.security");
-const redirectUri = "http://127.0.0.1:8080/";
+// Desktop apps redirect to the loopback interface, by IP or as localhost; web apps to their own site.
 const clients = {
-  admin: { client_id: "admin-client", client_secret: "admin-secret", name: "Directory sync" },
-  mail: { client_id: "mail-client", client_secret: "mail-secret", name: "Mail reader" },
-  drive: { client_id: "drive-client", client_secret: "drive-secret", name: "Drive backup" },
+  admin: {
+    client_id: "admin-client",
+    client_secret: "admin-secret",
+    name: "Directory sync",
+    redirect_uris: ["http://127.0.0.1:8080/", "http://[::1]:8080/", "http://localhost"],
+  },
+  mail: {
+    client_id: "mail-client",
+    client_secret: "mail-secret",
+    name: "Mail reader",
+    redirect_uris: ["https://mail-reader.example/callback"],
+  },
+  drive: {
+    client_id: "drive-client",
+    client_secret: "drive-secret",
+    name: "Drive backup",
+    redirect_uris: ["https://drive-backup.example/callback", "http://localhost:3000/callback"],
+  },
 };
 const admin = "admin@clinic.example";
 const staff = "staff@clinic.example";
@@ -33,7 +48,7 @@ function fixture() {
       { email: staff, name: "Sam Staff" },
       { email: other, name: "Olga Other" },
     ],
-    oauth_clients: Object.values(clients).map((client) => ({ ...client, redirect_uris: [redirectUri] })),
+    oauth_clients: Object.values(clients),
   });
 
   const form = (path: string, body: Record<string, string>) =>
@@ -45,6 +60,7 @@ function fixture() {
 
   async function grant(email: string, client: Client, scopes: string[]): Promise<Grant> {
     const { client_id, client_secret } = clients[client];
+    const redirectUri = clients[client].redirect_uris[0];
     const authorize = await form("/o/oauth2/v2/auth/callback", {
       email,
       redirect_uri: redirectUri,
@@ -115,6 +131,23 @@ describe("Google Directory API tokens", () => {
 
     const byId = (await (await request(`${directory}/users/${user.id}/tokens`, auth)).json()) as typeof body;
     expect(byId.items).toHaveLength(2);
+  });
+
+  it("marks clients that redirect only to the loopback interface as installed applications", async () => {
+    const { grant, request, adminToken } = fixture();
+    await grant(staff, "admin", ["openid"]);
+    await grant(staff, "mail", ["openid"]);
+    await grant(staff, "drive", ["openid"]);
+    const auth = await adminToken();
+
+    const body = (await (await request(`${directory}/users/${staff}/tokens`, auth)).json()) as {
+      items: { clientId: string; nativeApp: boolean; anonymous: boolean }[];
+    };
+    const native = Object.fromEntries(body.items.map((token) => [token.clientId, token.nativeApp]));
+    expect(native).toEqual({ "admin-client": true, "mail-client": false, "drive-client": false });
+    expect(body.items.every((token) => token.anonymous === false)).toBe(true);
+    const single = await request(`${directory}/users/${staff}/tokens/admin-client`, auth);
+    expect(await single.json()).toMatchObject({ clientId: "admin-client", nativeApp: true });
   });
 
   it("lists no tokens for a user who granted none", async () => {
