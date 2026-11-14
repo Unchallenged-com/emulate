@@ -555,7 +555,7 @@ curl -X PATCH "http://localhost:4002/drive/v3/files/drv_readme?addParents=folder
 
 ## Google Admin SDK Directory API
 
-Admin SDK Directory API: users, groups, and group members under `/admin/directory/v1`, with the discovery document at `/discovery/v1/apis/admin/directory_v1/rest` and `/$discovery/rest?version=directory_v1`. The account's users are those of a hosted domain; `customer=my_customer` or the `google.customer_id` seed value selects them. A seeded user with `is_admin: true` is a super administrator, and a user with `suspended: true` (seeded, or set through `users.update`) cannot sign in. With `google.strict_scopes: true`, Directory calls need the method's `admin.directory.*` scope and a super administrator, and other users get `403` with `forbidden`. The `tokens` methods under `/admin/directory/v1/users/:userKey/tokens` list, get, and delete the tokens a user issued to applications, one per OAuth client with the scopes of its grants; deleting one ends every access and refresh token the user holds for that client, and they need the `admin.directory.user.security` scope. Responses honor the `fields` parameter. Search queries, batch requests, aliases, organizational units, renaming, and delegated administrator roles are not modeled.
+Admin SDK Directory API: users, groups, and group members under `/admin/directory/v1`, with the discovery document at `/discovery/v1/apis/admin/directory_v1/rest` and `/$discovery/rest?version=directory_v1`. The account's users are those of a hosted domain; `customer=my_customer` or the `google.customer_id` seed value selects them. A seeded user with `is_admin: true` is a super administrator, and a user with `suspended: true` (seeded, or set through `users.update`) cannot sign in. With `google.strict_scopes: true`, Directory calls need the method's `admin.directory.*` scope and a super administrator, and other users get `403` with `forbidden`. The `tokens` methods under `/admin/directory/v1/users/:userKey/tokens` list, get, and delete the tokens a user issued to applications, one per OAuth client with the scopes of its grants; deleting one ends every access and refresh token the user holds for that client, and they need the `admin.directory.user.security` scope. `POST /admin/directory/v1/users/:userKey/signOut` needs the same scope and keeps the tokens the user issued to applications, as Google does; the emulator keeps no sign-in session to end. Responses honor the `fields` parameter. Search queries, batch requests, aliases, organizational units, renaming, and delegated administrator roles are not modeled.
 
 ```bash
 # Create a user (needs admin.directory.user and a super administrator in strict mode)
@@ -578,6 +578,10 @@ curl -X PUT http://localhost:4002/admin/directory/v1/users/nina@acme.com \
 curl http://localhost:4002/admin/directory/v1/users/nina@acme.com/tokens \
   -H "Authorization: Bearer $TOKEN"
 curl -X DELETE http://localhost:4002/admin/directory/v1/users/nina@acme.com/tokens/my-client-id.apps.googleusercontent.com \
+  -H "Authorization: Bearer $TOKEN"
+
+# Sign a user out; their application tokens keep working
+curl -X POST http://localhost:4002/admin/directory/v1/users/nina@acme.com/signOut \
   -H "Authorization: Bearer $TOKEN"
 
 # Create a group and add a member

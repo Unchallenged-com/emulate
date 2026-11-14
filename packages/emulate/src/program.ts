@@ -99,6 +99,7 @@ Google Admin SDK Directory:
   Seed google.users[].is_admin for super administrators; a suspended user cannot sign in.
   In strict mode, calls need the method's admin.directory.* scope and a super administrator.
   users/:userKey/tokens lists a user's application tokens; deleting one ends that client's access and refresh tokens.
+  POST users/:userKey/signOut keeps the tokens the user issued to applications, as Google does.
 
 Google OIDC:
   Discovery advertises RS256 ID tokens, and GET /oauth2/v3/certs returns the RSA public key used to verify them.

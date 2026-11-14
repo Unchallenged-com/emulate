@@ -299,6 +299,19 @@ export function adminDirectoryRoutes({ app, store, baseUrl, tokenMap }: RouteCon
     return empty(c);
   });
 
+  // "Signs a user out of all web and device sessions and reset their sign-in cookies."
+  // (https://developers.google.com/workspace/admin/directory/reference/rest/v1/users/signOut) The emulator keeps no
+  // sign-in session, and the tokens the user issued to applications stay: "Resetting a user's sign-in cookies does
+  // not sign them out of apps, such as Gmail and Google Drive for desktop."
+  // (https://knowledge.workspace.google.com/admin/devices/sign-a-user-out-of-a-managed-google-account)
+  app.post(`${PREFIX}/users/:userKey/signOut`, (c) => {
+    const admin = requireAdmin(c);
+    if (admin instanceof Response) return admin;
+    const user = findUserByKey(gs, c.req.param("userKey") ?? "");
+    if (!user) return notFound(c, USER_NOT_FOUND);
+    return empty(c);
+  });
+
   // ---------- Tokens ----------
   // The tokens a user issued to applications, one per client: the authorization code grants the emulator holds.
 
