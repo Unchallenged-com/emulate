@@ -555,7 +555,7 @@ curl -X PATCH "http://localhost:4002/drive/v3/files/drv_readme?addParents=folder
 
 ## Google Admin SDK Directory API
 
-Admin SDK Directory API: users, groups, and group members under `/admin/directory/v1`, with the discovery document at `/discovery/v1/apis/admin/directory_v1/rest` and `/$discovery/rest?version=directory_v1`. The account's users are those of a hosted domain; `customer=my_customer` or the `google.customer_id` seed value selects them. A seeded user with `is_admin: true` is a super administrator, and a user with `suspended: true` (seeded, or set through `users.update`) cannot sign in. With `google.strict_scopes: true`, Directory calls need the method's `admin.directory.*` scope and a super administrator, and other users get `403` with `forbidden`. Responses honor the `fields` parameter. Search queries, batch requests, aliases, organizational units, renaming, and delegated administrator roles are not modeled.
+Admin SDK Directory API: users, groups, and group members under `/admin/directory/v1`, with the discovery document at `/discovery/v1/apis/admin/directory_v1/rest` and `/$discovery/rest?version=directory_v1`. The account's users are those of a hosted domain; `customer=my_customer` or the `google.customer_id` seed value selects them. A seeded user with `is_admin: true` is a super administrator, and a user with `suspended: true` (seeded, or set through `users.update`) cannot sign in or refresh a token, and in strict mode the access tokens issued before the suspension are refused until the user is restored. With `google.strict_scopes: true`, Directory calls need the method's `admin.directory.*` scope and a super administrator, and other users get `403` with `forbidden`. Responses honor the `fields` parameter. Search queries, batch requests, aliases, organizational units, renaming, and delegated administrator roles are not modeled.
 
 ```bash
 # Create a user (needs admin.directory.user and a super administrator in strict mode)
@@ -568,7 +568,7 @@ curl -X POST http://localhost:4002/admin/directory/v1/users \
 curl "http://localhost:4002/admin/directory/v1/users?customer=my_customer&fields=users(primaryEmail,suspended)" \
   -H "Authorization: Bearer $TOKEN"
 
-# Suspend a user: they can no longer sign in
+# Suspend a user: they can no longer sign in, and their tokens stop working
 curl -X PUT http://localhost:4002/admin/directory/v1/users/nina@acme.com \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
