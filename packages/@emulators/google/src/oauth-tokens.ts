@@ -70,3 +70,35 @@ export function revokeToken(store: Store, tokenMap: TokenMap | undefined, token:
   tokenMap?.delete(token);
   refreshTokens.delete(token);
 }
+
+/** Ends every access and refresh token `email` holds for `clientId`. */
+export function revokeClientTokens(store: Store, tokenMap: TokenMap | undefined, email: string, clientId: string) {
+  const accessTokens = getAccessTokens(store);
+  const refreshTokens = getRefreshTokens(store);
+  const revoked = new Set<string>();
+  for (const [refreshToken, record] of refreshTokens) {
+    if (record.email === email && record.clientId === clientId) {
+      revoked.add(refreshToken);
+      refreshTokens.delete(refreshToken);
+    }
+  }
+  for (const [accessToken, record] of accessTokens) {
+    if (revoked.has(record.refreshToken)) {
+      accessTokens.delete(accessToken);
+      tokenMap?.delete(accessToken);
+    }
+  }
+}
+
+/** The scopes `email` granted each client, from its live refresh tokens, keyed by client ID. */
+export function clientGrants(store: Store, email: string): Map<string, string[]> {
+  const grants = new Map<string, Set<string>>();
+  for (const record of getRefreshTokens(store).values()) {
+    if (record.email !== email) continue;
+    const scopes = grants.get(record.clientId) ?? new Set<string>();
+    const granted = record.scope.split(/\s+/).filter(Boolean);
+    for (const scope of granted.length > 0 ? granted : ["openid", "email", "profile"]) scopes.add(scope);
+    grants.set(record.clientId, scopes);
+  }
+  return new Map([...grants].map(([clientId, scopes]) => [clientId, [...scopes]]));
+}
