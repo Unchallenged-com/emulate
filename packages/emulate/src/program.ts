@@ -100,6 +100,7 @@ Google Admin SDK Directory:
   Users, groups, and members under /admin/directory/v1; discovery at /$discovery/rest?version=directory_v1.
   Seed google.users[].is_admin for super administrators; a suspended user cannot sign in.
   In strict mode, calls need the method's admin.directory.* scope and a super administrator.
+  users/:userKey/tokens lists a user's application tokens; deleting one ends that client's access and refresh tokens.
   Groups Settings API: GET, PUT and PATCH /groups/v1/groups/:email, sharing a group's name and description.
 
 Google OIDC:

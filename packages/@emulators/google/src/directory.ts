@@ -76,7 +76,7 @@ export function findMember(gs: GoogleStore, group: GoogleGroup, key: string): Go
 
 // Etags are two base64url parts joined by a slash, in quotes ("BvGfkzKoKVD0NM7VdXdzkXDD-nHLkyMjheL_9Z5X0H0/
 // oMJEIb2O8LE-zfPM0TV_9m3WkMA" in the captured responses above).
-function etagOf(resource: Record<string, unknown>): string {
+export function etagOf(resource: unknown): string {
   const hash = createHash("sha256").update(JSON.stringify(resource)).digest("base64url");
   return `"${hash.slice(0, 43)}/${hash.slice(8, 35)}"`;
 }
@@ -112,6 +112,26 @@ export function userResource(store: Store, user: GoogleUser): Record<string, unk
     includeInGlobalAddressList: user.include_in_global_address_list ?? true,
     isEnrolledIn2Sv: false,
     isEnforcedIn2Sv: false,
+  };
+  return { ...resource, etag: etagOf(resource) };
+}
+
+/** A user's token for one client (https://developers.google.com/workspace/admin/directory/reference/rest/v1/tokens).
+ * Every client is a registered web application here: the emulator has no anonymous or installed-app clients. */
+export function tokenResource(
+  gs: GoogleStore,
+  user: GoogleUser,
+  clientId: string,
+  scopes: string[],
+): Record<string, unknown> {
+  const resource: Record<string, unknown> = {
+    kind: "admin#directory#token",
+    clientId,
+    displayText: gs.oauthClients.findOneBy("client_id", clientId)?.name ?? clientId,
+    anonymous: false,
+    nativeApp: false,
+    userKey: user.uid,
+    scopes,
   };
   return { ...resource, etag: etagOf(resource) };
 }

@@ -95,3 +95,16 @@ export function revokeToken(store: Store, tokenMap: TokenMap | undefined, token:
   getRefreshTokens(store).delete(token);
   return grant !== undefined;
 }
+
+/** The scopes `email` granted each client, from its live refresh tokens, keyed by client ID. */
+export function clientGrants(store: Store, email: string): Map<string, string[]> {
+  const grants = new Map<string, Set<string>>();
+  for (const record of getRefreshTokens(store).values()) {
+    if (record.email !== email) continue;
+    const scopes = grants.get(record.clientId) ?? new Set<string>();
+    const granted = record.scope.split(/\s+/).filter(Boolean);
+    for (const scope of granted.length > 0 ? granted : ["openid", "email", "profile"]) scopes.add(scope);
+    grants.set(record.clientId, scopes);
+  }
+  return new Map([...grants].map(([clientId, scopes]) => [clientId, [...scopes]]));
+}
