@@ -150,19 +150,19 @@ describe("Google strict OAuth authentication", () => {
   });
 
   it.each(["access_token", "refresh_token"] as const)(
-    "revokes a grant through its %s without affecting other grants",
+    "revokes a grant through its %s along with the user's other grants to the client",
     async (credential) => {
       const { grant, refresh, revoke, request } = fixture(true);
       const issued = await grant(scope("drive"));
-      const independent = await grant(scope("drive"));
+      const sameClient = await grant(scope("drive"));
       const renewed = (await (await refresh(issued.refresh_token)).json()) as { access_token: string };
       expect((await revoke(issued[credential])).status).toBe(200);
-      for (const token of [issued.access_token, renewed.access_token]) {
+      for (const token of [issued.access_token, renewed.access_token, sameClient.access_token]) {
         for (const path of resourcePaths) expect((await request(path, token)).status).toBe(401);
       }
       expect((await refresh(issued.refresh_token)).status).toBe(400);
-      expect((await request(resourcePaths[0], independent.access_token)).status).toBe(200);
-      expect((await revoke(issued[credential])).status).toBe(200);
+      expect((await refresh(sameClient.refresh_token)).status).toBe(400);
+      expect((await revoke(issued[credential])).status).toBe(400);
     },
   );
 
