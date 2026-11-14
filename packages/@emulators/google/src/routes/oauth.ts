@@ -385,6 +385,11 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
       if (!user) {
         return c.json({ error: "invalid_grant", error_description: "User not found." }, 400);
       }
+      // invalid_grant on refresh: "the user account may have been deleted or disabled"
+      // (https://developers.google.com/identity/protocols/oauth2/web-server#authorization-errors-invalid-grant).
+      if (user.suspended === true) {
+        return c.json({ error: "invalid_grant", error_description: "The refresh token is invalid." }, 400);
+      }
 
       const accessToken = issueAccessToken(store, tokenMap, user, record.scope, refreshToken);
 
