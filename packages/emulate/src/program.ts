@@ -98,6 +98,7 @@ Google OIDC:
   Discovery advertises RS256 ID tokens, and GET /oauth2/v3/certs returns the RSA public key used to verify them.
   Set google.strict_scopes: true in seed config to validate issued access tokens, expiry, revocation, and method scopes.
   Strict mode returns Google-style 401/403 errors and limits userinfo claims; bearer-token defaults remain permissive.
+  In strict mode, POST /oauth2/revoke ends every token the user holds for the client and rejects unknown tokens.
 
 Resend API coverage:
   POST /emails and POST /emails/batch support 24-hour Idempotency-Key replay without duplicate emails or webhooks.

@@ -423,8 +423,13 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
       token = params.get("token") ?? "";
     }
 
-    if (token) {
-      revokeToken(store, tokenMap, token);
+    const known = token ? revokeToken(store, tokenMap, token) : false;
+    // "For error conditions, an HTTP status code 400 is returned along with an error code."
+    // (https://developers.google.com/identity/protocols/oauth2/web-server#tokenrevoke) The bodies are Google's
+    // answers to a request without a token and to a token it does not know.
+    if (store.getData<boolean>("google.strict_scopes") === true) {
+      if (!token) return c.json({ error: "invalid_request", error_description: "Bad Request" }, 400);
+      if (!known) return c.json({ error: "invalid_token" }, 400);
     }
 
     return c.body(null, 200);
