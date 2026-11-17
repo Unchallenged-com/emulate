@@ -299,6 +299,21 @@ export function adminDirectoryRoutes({ app, store, baseUrl, tokenMap }: RouteCon
     return empty(c);
   });
 
+  // "Makes a user a super administrator." (https://developers.google.com/workspace/admin/directory/reference/rest/v1/
+  // users/makeAdmin), `status` true or false, required by the discovery document; "A successful response returns an
+  // HTTP 200 status code." (https://developers.google.com/workspace/admin/directory/v1/guides/manage-users)
+  app.post(`${PREFIX}/users/:userKey/makeAdmin`, async (c) => {
+    const admin = requireAdmin(c);
+    if (admin instanceof Response) return admin;
+    const user = findUserByKey(gs, c.req.param("userKey") ?? "");
+    if (!user) return notFound(c, USER_NOT_FOUND);
+    const body = await parseGoogleBody(c);
+    const status = bool(body.status);
+    if (status === undefined) return required(c, "Missing required field: status");
+    gs.users.update(user.id, { is_admin: status });
+    return empty(c);
+  });
+
   // "Signs a user out of all web and device sessions and reset their sign-in cookies."
   // (https://developers.google.com/workspace/admin/directory/reference/rest/v1/users/signOut) The emulator keeps no
   // sign-in session, and the tokens the user issued to applications stay: "Resetting a user's sign-in cookies does

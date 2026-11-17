@@ -216,6 +216,31 @@ describe("Google Admin SDK Directory API", () => {
     expect((await signIn(staff, "openid email")).status).toBe(302);
   });
 
+  it("makes a user a super administrator and back with users.makeAdmin", async () => {
+    const { request, token } = fixture();
+    const auth = await token();
+    const promoted = await request(`${directory}/users/${staff}/makeAdmin`, auth, "POST", { status: true });
+    expect(promoted.status).toBe(200);
+    expect(await promoted.text()).toBe("");
+    expect(await (await request(`${directory}/users/${staff}`, auth)).json()).toMatchObject({ isAdmin: true });
+    const staffToken = await token(staff, scope("admin.directory.user"));
+    expect((await request(`${directory}/users?customer=my_customer`, staffToken)).status).toBe(200);
+
+    const demoted = await request(`${directory}/users/${staff}/makeAdmin`, auth, "POST", { status: false });
+    expect(demoted.status).toBe(200);
+    expect(await (await request(`${directory}/users/${staff}`, auth)).json()).toMatchObject({ isAdmin: false });
+    expect((await request(`${directory}/users?customer=my_customer`, staffToken)).status).toBe(403);
+
+    const missing = await request(`${directory}/users/${staff}/makeAdmin`, auth, "POST", {});
+    expect(missing.status).toBe(400);
+    expect(await missing.json()).toMatchObject({ error: { errors: [{ reason: "required" }] } });
+    const unknown = await request(`${directory}/users/nobody@clinic.example/makeAdmin`, auth, "POST", { status: true });
+    expect(unknown.status).toBe(404);
+    expect((await request(`${directory}/users/${admin}/makeAdmin`, staffToken, "POST", { status: true })).status).toBe(
+      403,
+    );
+  });
+
   it("deletes a user, their memberships and their sign-in", async () => {
     const { app, request, signIn, token } = fixture();
     const auth = await token();
