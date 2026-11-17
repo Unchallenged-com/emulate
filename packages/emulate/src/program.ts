@@ -101,7 +101,9 @@ Google Calendar discovery:
 
 Google Admin SDK Directory:
   Users, groups, and members under /admin/directory/v1; discovery at /$discovery/rest?version=directory_v1.
-  Seed google.users[].is_admin, or call users.makeAdmin, for super administrators; a suspended user cannot sign in.
+  Seed google.users[].is_admin, or call users.makeAdmin, for super administrators.
+  A suspended user cannot sign in or refresh a token, and in strict mode their earlier access tokens are refused
+  until the user is restored.
   In strict mode, calls need the method's admin.directory.* scope and a super administrator.
 
 Google OIDC:

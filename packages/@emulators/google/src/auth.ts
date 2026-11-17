@@ -105,7 +105,10 @@ export function googleAuthMiddleware(app: Hono<AppEnv>, store: Store): Middlewar
     const token = c.req.header("Authorization")?.match(/^Bearer\s+(\S+)\s*$/i)?.[1];
     const record = token ? getAccessTokens(store).get(token) : undefined;
     const user = record && getGoogleStore(store).users.findOneBy("email", record.email);
-    if (!token || !record || record.expiresAt <= Date.now() || !user) {
+    // A suspended user's Google Workspace services "are unavailable to the user"
+    // (https://knowledge.workspace.google.com/admin/users/suspend-a-user-temporarily): their tokens fail as invalid
+    // credentials until the user is restored.
+    if (!token || !record || record.expiresAt <= Date.now() || !user || user.suspended === true) {
       if (path.startsWith("/admin/directory/v1/")) {
         return directoryAuthError(c);
       }
