@@ -17,7 +17,8 @@ import {
 } from "@emulators/core";
 import { getGoogleStore } from "../store.js";
 import type { GoogleUser } from "../entities.js";
-import { getRefreshTokens, issueAccessToken, revokeToken } from "../oauth-tokens.js";
+import { getRefreshTokens, issueAccessToken, revokeToken, tokenGrant } from "../oauth-tokens.js";
+import { recordLoginEvent, recordTokenEvent } from "../reports.js";
 import { createAuthnRequest, getWebSessionUser, ssoProfileForUser } from "../saml.js";
 import { JWT_BEARER_GRANT, jwtBearerGrant } from "../service-accounts.js";
 
@@ -244,6 +245,7 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
     // (https://knowledge.workspace.google.com/admin/users/suspend-a-user-temporarily), so signing in fails.
     const user = gs.users.findOneBy("email", email as GoogleUser["email"]);
     if (user?.suspended === true) {
+      recordLoginEvent(c, store, user, "login_failure");
       return c.html(
         renderErrorPage("Account suspended", "This account has been suspended by an administrator.", SERVICE_LABEL),
         403,
@@ -268,6 +270,10 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
       );
     }
     if (user) gs.users.update(user.id, { last_login_time: new Date().toISOString() });
+    // Signing in on the emulator's page is both the sign-in and the user's consent to the client. A user with an SSO
+    // profile signed in at the identity provider instead.
+    if (!profile) recordLoginEvent(c, store, user, "login_success");
+    recordTokenEvent(c, store, email, "authorize", client_id, scope);
 
     const code = randomBytes(20).toString("hex");
 
@@ -537,7 +543,9 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
     }
 
     token ||= c.req.query("token") ?? "";
+    const grant = token ? tokenGrant(store, token) : undefined;
     const known = token ? revokeToken(store, tokenMap, token) : false;
+    if (grant) recordTokenEvent(c, store, grant.email, "revoke", grant.clientId, grant.scope);
     // "For error conditions, an HTTP status code 400 is returned along with an error code."
     // (https://developers.google.com/identity/protocols/oauth2/web-server#tokenrevoke) The bodies are Google's
     // answers to a request without a token and to a token it does not know.

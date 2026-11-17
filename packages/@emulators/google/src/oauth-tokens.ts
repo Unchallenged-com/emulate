@@ -108,3 +108,9 @@ export function clientGrants(store: Store, email: string): Map<string, string[]>
   }
   return new Map([...grants].map(([clientId, scopes]) => [clientId, [...scopes]]));
 }
+
+/** The grant an access or refresh token comes from: its user, client and scopes. */
+export function tokenGrant(store: Store, token: string): RefreshTokenRecord | undefined {
+  const refreshToken = getAccessTokens(store).get(token)?.refreshToken ?? token;
+  return getRefreshTokens(store).get(refreshToken);
+}

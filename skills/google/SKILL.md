@@ -183,7 +183,7 @@ google:
 
 When no OAuth clients are configured, the emulator accepts any `client_id`. With clients configured, strict validation is enforced for `client_id`, `client_secret`, and `redirect_uri`.
 
-Google authentication is permissive by default for local bearer-token workflows. Set `google.strict_scopes: true` in seed config to require emulator-issued, unexpired access tokens on Gmail, Calendar, Drive, Directory, and userinfo routes. Invalid credentials return `401 UNAUTHENTICATED`; missing method scopes return `403` with `insufficientPermissions`. Strict mode distinguishes read, write, send, settings, and metadata scopes, and userinfo includes only granted identity claims. Revoking an access or refresh token at `/oauth2/revoke` invalidates every access and refresh token the user holds for that client, as Google revokes the whole grant; an unknown or already revoked token returns `400` with `invalid_token`, and a request without a token returns `400` with `invalid_request`. Discovery, signing keys, and the sign-in page remain public. This mode checks method scopes; resource-specific grants such as `drive.file` and Gmail add-on scopes are not modeled.
+Google authentication is permissive by default for local bearer-token workflows. Set `google.strict_scopes: true` in seed config to require emulator-issued, unexpired access tokens on Gmail, Calendar, Drive, Directory, Reports, and userinfo routes. Invalid credentials return `401 UNAUTHENTICATED`; missing method scopes return `403` with `insufficientPermissions`. Strict mode distinguishes read, write, send, settings, and metadata scopes, and userinfo includes only granted identity claims. Revoking an access or refresh token at `/oauth2/revoke` invalidates every access and refresh token the user holds for that client, as Google revokes the whole grant; an unknown or already revoked token returns `400` with `invalid_token`, and a request without a token returns `400` with `invalid_request`. Discovery, signing keys, and the sign-in page remain public. This mode checks method scopes; resource-specific grants such as `drive.file` and Gmail add-on scopes are not modeled.
 
 Set `google.sso_profiles` to sign users in with a third-party SAML identity provider. Each profile has an `id`, the identity provider's `sign_in_page_url`, one or two RSA verification `certificates` (PEM), optional `idp_entity_id` and `sign_out_page_url`, and the primary emails of the `users` it is assigned to (Google assigns profiles to organizational units or groups, which the emulator does not model). The profile's entity ID is `<base URL>/samlrp/<id>` and its ACS URL is `<base URL>/samlrp/<id>/acs`. Picking an assigned user on `/o/oauth2/v2/auth` posts an unsigned AuthnRequest to the sign-in page URL with the HTTP POST binding. The ACS accepts an assertion signed with RSA-SHA256 by a profile certificate, whose `emailAddress` NameID is the user's primary email (case-sensitive), with the ACS URL as Recipient and a `NotOnOrAfter` on its bearer subject confirmation, the entity ID as Audience, the ACS URL as Destination when one is set, the `idp_entity_id` as Issuer when the profile sets one, and that answers a request the emulator sent to the same browser, posted with that request's exact `RelayState`: identity-provider-initiated responses are refused with `403`, as Google does not support them. Starting a sign-in sets a `_emu_google_sso_browser` cookie (`SameSite=Lax`) that the ACS requires; a cross-site post without it is posted again from the emulator's origin once. A valid response opens a 14-day web session, and the authorization page then authorizes only the signed-in user. Users without a profile and super administrators (`is_admin: true` on a seeded user) keep the user picker.
 
@@ -638,6 +638,24 @@ curl -X POST http://localhost:4002/admin/directory/v1/groups/nurses@acme.com/mem
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"email": "nina@acme.com", "role": "MEMBER"}'
+```
+
+## Google Admin SDK Reports API
+
+Admin SDK Reports API: `activities.list` at `/admin/reports/v1/activity/users/:userKey/applications/:applicationName`, with the discovery document at `/discovery/v1/apis/admin/reports_v1/rest` and `/$discovery/rest?version=reports_v1`. The emulator records the activity of the account's users in three applications: `login` (`login_success` when a user signs in, `login_failure` when a suspended user tries), `token` (`authorize` when a user grants a client access, `revoke` when one of its tokens is revoked at `/oauth2/revoke`), and `admin` (the Directory API changes an administrator makes to users, administrator status, groups, and group members). Each activity carries its actor, the client's address (behind a proxy on the loopback interface, the address it adds to `X-Forwarded-For`), and, for administrator changes, the OAuth client used. The list honors `userKey` (`all`, an email address, or a profile ID), `eventName`, `filters`, `startTime`, `endTime`, `actorIpAddress`, `customerId`, `maxResults`, and `pageToken`, newest first; the other applications return an empty report. With `google.strict_scopes: true`, it needs the `admin.reports.audit.readonly` scope and a super administrator. Organizational unit and group filters, usage reports, push notifications, and the other events Google documents are not modeled.
+
+```bash
+# Sign-ins of the last 180 days (needs admin.reports.audit.readonly and a super administrator in strict mode)
+curl "http://localhost:4002/admin/reports/v1/activity/users/all/applications/login" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Refused sign-ins of one user since a date
+curl "http://localhost:4002/admin/reports/v1/activity/users/nina@acme.com/applications/login?eventName=login_failure&startTime=2026-01-01T00:00:00Z" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Administrator changes to one user
+curl "http://localhost:4002/admin/reports/v1/activity/users/all/applications/admin?filters=USER_EMAIL==nina@acme.com" \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 ## Common Patterns

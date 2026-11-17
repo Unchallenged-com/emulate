@@ -112,6 +112,11 @@ Google Admin SDK Directory:
   POST users/:userKey/signOut keeps the tokens the user issued to applications, as Google does.
   Groups Settings API: GET, PUT and PATCH /groups/v1/groups/:email, sharing a group's name and description.
 
+Google Admin SDK Reports:
+  activities.list under /admin/reports/v1 for the login, token, and admin applications; discovery at
+  /$discovery/rest?version=reports_v1. Records sign-ins, grants and revocations, and Directory changes.
+  In strict mode, calls need admin.reports.audit.readonly and a super administrator.
+
 Google OIDC:
   Refresh-token grants return an access token and an RS256-signed ID token.
   POST /oauth2/revoke accepts tokens in query parameters, form bodies, or JSON bodies.

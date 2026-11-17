@@ -2,6 +2,7 @@ import type { AppEnv, Hono, MiddlewareHandler, Store } from "@emulators/core";
 import { directoryRouteScopes } from "./directory-discovery.js";
 import { GROUPS_SETTINGS_SCOPES } from "./groups-settings-discovery.js";
 import { directoryAuthError } from "./directory.js";
+import { reportsRouteScopes } from "./reports-discovery.js";
 import { googleApiError } from "./helpers.js";
 import { getAccessTokens } from "./oauth-tokens.js";
 import { getGoogleStore } from "./store.js";
@@ -100,7 +101,9 @@ export function googleAuthMiddleware(app: Hono<AppEnv>, store: Store): Middlewar
     if (!route) return next();
     const path = route.path.replace(/^\/upload\//, "/");
     if (
-      !/^\/(gmail\/v1|drive\/v3|calendar\/v3|admin\/directory\/v1|groups\/v1\/groups)\//.test(path) &&
+      !/^\/(gmail\/v1|drive\/v3|calendar\/v3|admin\/directory\/v1|admin\/reports\/v1|groups\/v1\/groups)\//.test(
+        path,
+      ) &&
       path !== "/oauth2/v2/userinfo"
     ) {
       return next();
@@ -113,15 +116,17 @@ export function googleAuthMiddleware(app: Hono<AppEnv>, store: Store): Middlewar
     // (https://knowledge.workspace.google.com/admin/users/suspend-a-user-temporarily): their tokens fail as invalid
     // credentials until the user is restored.
     if (!token || !record || record.expiresAt <= Date.now() || !user || user.suspended === true) {
-      if (path.startsWith("/admin/directory/v1/") || path.startsWith("/groups/v1/groups/")) {
+      if (path.startsWith("/admin/") || path.startsWith("/groups/v1/groups/")) {
         return directoryAuthError(c);
       }
       return googleApiError(c, 401, "Request had invalid authentication credentials.", "authError", "UNAUTHENTICATED");
     }
 
+    const key = `${route.method} ${path}`;
     let required =
-      routeScopes[`${route.method} ${path}`] ??
-      directoryRouteScopes[`${route.method} ${path}`] ??
+      routeScopes[key] ??
+      directoryRouteScopes[key] ??
+      reportsRouteScopes[key] ??
       (path.startsWith("/groups/v1/groups/") ? GROUPS_SETTINGS_SCOPES : []);
     if (route.method === "GET" && path === "/drive/v3/files/:fileId" && c.req.query("alt") === "media") {
       required = driveContent;

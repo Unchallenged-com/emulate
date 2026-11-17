@@ -19,6 +19,7 @@ import { messageRoutes } from "./routes/messages.js";
 import { oauthRoutes } from "./routes/oauth.js";
 import { adminDirectoryRoutes } from "./routes/admin-directory.js";
 import { groupsSettingsRoutes } from "./routes/groups-settings.js";
+import { reportsRoutes } from "./routes/reports.js";
 import { setCustomerId } from "./directory.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { threadRoutes } from "./routes/threads.js";
@@ -545,6 +546,7 @@ export const googlePlugin: ServicePlugin = {
     samlRoutes(ctx);
     adminDirectoryRoutes(ctx);
     groupsSettingsRoutes(ctx);
+    reportsRoutes(ctx);
     calendarRoutes(ctx);
     driveRoutes(ctx);
     messageRoutes(ctx);
