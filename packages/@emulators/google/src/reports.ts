@@ -28,7 +28,7 @@ function record(
   store: Store,
   application: ReportsApplication,
   actor: GoogleUser,
-  event: GoogleActivityEvent,
+  events: GoogleActivityEvent[],
   oauthClientId: string | null = null,
 ): void {
   const gs = getGoogleStore(store);
@@ -42,9 +42,8 @@ function record(
     actor_profile_id: actor.uid,
     actor_oauth_client_id: oauthClientId,
     actor_application_name: oauthClientId ? (client?.name ?? null) : null,
-    owner_domain: actor.hd,
     ip_address: clientAddress(c.req.raw) ?? null,
-    events: [event],
+    events,
   });
 }
 
@@ -65,7 +64,7 @@ export function recordLoginEvent(
   if (name === "login_success") parameters.push({ name: "is_suspicious", boolValue: false });
   // A suspended user is the documented `login_failure_account_disabled`: "The user's account is disabled."
   else parameters.push(param("login_failure_type", "login_failure_account_disabled"));
-  record(c, store, "login", user, { type: "login", name, parameters });
+  record(c, store, "login", user, [{ type: "login", name, parameters }]);
 }
 
 // Desktop apps redirect to the loopback interface (https://developers.google.com/identity/protocols/oauth2/native-app),
@@ -96,16 +95,20 @@ export function recordTokenEvent(
   if (!inAccount(user)) return;
   const client = gs.oauthClients.findOneBy("client_id", clientId);
   const scopes = scope.split(/\s+/).filter(Boolean);
-  record(c, store, "token", user, {
-    type: "auth",
-    name,
-    parameters: [
-      param("app_name", client?.name ?? clientId),
-      param("client_id", clientId),
-      param("client_type", clientType(client?.redirect_uris ?? [])),
-      { name: "scope", multiValue: scopes.length > 0 ? scopes : ["openid", "email", "profile"] },
-    ],
-  });
+  // The order of captured responses. They also carry `scope_data`, each scope with its product bucket; Google does not
+  // document which bucket a scope belongs to, so the emulator leaves it out.
+  record(c, store, "token", user, [
+    {
+      type: "auth",
+      name,
+      parameters: [
+        param("client_id", clientId),
+        param("app_name", client?.name ?? clientId),
+        param("client_type", clientType(client?.redirect_uris ?? [])),
+        { name: "scope", multiValue: scopes.length > 0 ? scopes : ["openid", "email", "profile"] },
+      ],
+    },
+  ]);
 }
 
 /** The OAuth client of the access token a request carries, if the emulator issued it from a grant. */
@@ -114,23 +117,29 @@ function requestClientId(c: Context, store: Store): string | null {
   return (token && tokenGrant(store, token)?.clientId) || null;
 }
 
+export const userEvent = (name: string, ...parameters: GoogleActivityParameter[]): GoogleActivityEvent => ({
+  type: "USER_SETTINGS",
+  name,
+  parameters,
+});
+
+export const groupEvent = (name: string, ...parameters: GoogleActivityParameter[]): GoogleActivityEvent => ({
+  type: "GROUP_SETTINGS",
+  name,
+  parameters,
+});
+
 /**
- * A change the calling administrator made through the Directory API, in the Admin application. The application the
- * administrator
- * called through is the actor's application, which Google fills "for third-party apps"
- * (https://knowledge.workspace.google.com/admin/reports/admin-log-events, "Actor application name").
+ * The changes one request of the calling administrator made through the Directory API, as one activity of the Admin
+ * application (captured responses group the events of one change, such as a password and its next-login requirement).
+ * The application the administrator called through is the actor's application, which Google fills "for third-party
+ * apps" (https://knowledge.workspace.google.com/admin/reports/admin-log-events, "Actor application name").
  */
-export function recordAdminEvent(
-  c: Context,
-  store: Store,
-  type: "USER_SETTINGS" | "GROUP_SETTINGS",
-  name: string,
-  parameters: GoogleActivityParameter[],
-): void {
+export function recordAdminActivity(c: Context, store: Store, events: GoogleActivityEvent[]): void {
   const email = getAuthenticatedEmail(c);
   const admin = email ? findUserByKey(getGoogleStore(store), email) : undefined;
-  if (!inAccount(admin)) return;
-  record(c, store, "admin", admin, { type, name, parameters }, requestClientId(c, store));
+  if (!inAccount(admin) || events.length === 0) return;
+  record(c, store, "admin", admin, events, requestClientId(c, store));
 }
 
 /** An activity as the Reports API returns it. */
@@ -145,7 +154,8 @@ export function activityResource(store: Store, activity: GoogleActivity): Record
       customerId: getCustomerId(store),
     },
     actor: {
-      callerType: "USER",
+      // Captured responses carry a caller type on Admin activities only.
+      ...(activity.application_name === "admin" ? { callerType: "USER" } : {}),
       email: activity.actor_email,
       profileId: activity.actor_profile_id,
       ...(activity.actor_oauth_client_id
@@ -157,7 +167,6 @@ export function activityResource(store: Store, activity: GoogleActivity): Record
           }
         : {}),
     },
-    ...(activity.owner_domain ? { ownerDomain: activity.owner_domain } : {}),
     ...(activity.ip_address ? { ipAddress: activity.ip_address } : {}),
     events: activity.events,
   };

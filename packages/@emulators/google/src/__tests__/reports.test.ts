@@ -15,7 +15,12 @@ const directory = "/admin/directory/v1";
 const reports = "/admin/reports/v1/activity/users";
 const scope = (name: string) => `https://www.googleapis.com/auth/${name}`;
 const auditScope = scope("admin.reports.audit.readonly");
-const adminScopes = [scope("admin.directory.user"), scope("admin.directory.group"), auditScope].join(" ");
+const adminScopes = [
+  scope("admin.directory.user"),
+  scope("admin.directory.user.security"),
+  scope("admin.directory.group"),
+  auditScope,
+].join(" ");
 const desktop = { client_id: "it-console", client_secret: "it-secret", name: "IT console" };
 const desktopRedirect = "http://127.0.0.1:8080/";
 const web = { client_id: "web-app", client_secret: "web-secret", name: "Clinic portal" };
@@ -28,8 +33,7 @@ type Activity = {
   kind: string;
   etag: string;
   id: { time: string; uniqueQualifier: string; applicationName: string; customerId: string };
-  actor: { callerType: string; email: string; profileId: string; applicationInfo?: Record<string, string> };
-  ownerDomain?: string;
+  actor: { callerType?: string; email: string; profileId: string; applicationInfo?: Record<string, string> };
   ipAddress?: string;
   events: Array<{ type: string; name: string; parameters: Array<Record<string, unknown>> }>;
 };
@@ -153,8 +157,7 @@ describe("Google Admin SDK Reports API", () => {
     expect(login).toMatchObject({
       kind: "admin#reports#activity",
       id: { applicationName: "login", customerId: "C0clinic1" },
-      actor: { callerType: "USER", email: admin, profileId },
-      ownerDomain: "clinic.example",
+      actor: { email: admin, profileId },
       ipAddress: adminIp,
       events: [
         {
@@ -171,7 +174,8 @@ describe("Google Admin SDK Reports API", () => {
     expect(login.id.time).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
     expect(login.id.uniqueQualifier).toMatch(/^-?\d+$/);
     expect(login.etag).toMatch(etag);
-    expect(login.actor).not.toHaveProperty("applicationInfo");
+    expect(login.actor).toEqual({ email: admin, profileId });
+    expect(login).not.toHaveProperty("ownerDomain");
 
     const grants = await report(auth, "token");
     expect(grants.items).toHaveLength(1);
@@ -184,8 +188,8 @@ describe("Google Admin SDK Reports API", () => {
           type: "auth",
           name: "authorize",
           parameters: [
-            { name: "app_name", value: "IT console" },
             { name: "client_id", value: desktop.client_id },
+            { name: "app_name", value: "IT console" },
             { name: "client_type", value: "NATIVE_DESKTOP" },
             { name: "scope", multiValue: adminScopes.split(" ") },
           ],
@@ -229,6 +233,7 @@ describe("Google Admin SDK Reports API", () => {
 
     const revokes = await report(auth, "token", "?eventName=revoke");
     expect(revokes.items).toHaveLength(1);
+    expect(revokes.items![0].actor).toEqual({ email: staff, profileId: expect.any(String) });
     expect(revokes.items![0]).toMatchObject({
       actor: { email: staff },
       ipAddress: "192.0.2.41",
@@ -237,8 +242,8 @@ describe("Google Admin SDK Reports API", () => {
           type: "auth",
           name: "revoke",
           parameters: [
-            { name: "app_name", value: "Clinic portal" },
             { name: "client_id", value: web.client_id },
+            { name: "app_name", value: "Clinic portal" },
             { name: "client_type", value: "WEB" },
             { name: "scope", multiValue: ["openid", "email"] },
           ],
@@ -279,54 +284,57 @@ describe("Google Admin SDK Reports API", () => {
     expect((await request(`${directory}/users`, auth, "POST", { ...user, primaryEmail: staff })).status).toBe(409);
 
     const changes = await report(auth, "admin");
-    expect(names(changes).reverse()).toEqual([
-      "CREATE_USER",
-      "CHANGE_FIRST_NAME",
-      "CHANGE_PASSWORD",
-      "MOVE_USER_TO_ORG_UNIT",
-      "CHANGE_PASSWORD_ON_NEXT_LOGIN",
-      "SUSPEND_USER",
-      "UNSUSPEND_USER",
-      "GRANT_ADMIN_PRIVILEGE",
-      "REVOKE_ADMIN_PRIVILEGE",
-      "CREATE_GROUP",
-      "CHANGE_GROUP_NAME",
-      "CHANGE_GROUP_DESCRIPTION",
-      "ADD_GROUP_MEMBER",
-      "UPDATE_GROUP_MEMBER",
-      "REMOVE_GROUP_MEMBER",
-      "DELETE_GROUP",
-      "DELETE_USER",
+    // One activity per request, with the events of its changes.
+    expect(changes.items!.map((activity) => activity.events.map((e) => e.name)).reverse()).toEqual([
+      ["CREATE_USER"],
+      ["CHANGE_FIRST_NAME", "CHANGE_PASSWORD", "MOVE_USER_TO_ORG_UNIT", "CHANGE_PASSWORD_ON_NEXT_LOGIN"],
+      ["SUSPEND_USER"],
+      ["UNSUSPEND_USER"],
+      ["GRANT_ADMIN_PRIVILEGE"],
+      ["REVOKE_ADMIN_PRIVILEGE"],
+      ["CREATE_GROUP"],
+      ["CHANGE_GROUP_NAME", "CHANGE_GROUP_DESCRIPTION"],
+      ["ADD_GROUP_MEMBER"],
+      ["UPDATE_GROUP_MEMBER"],
+      ["REMOVE_GROUP_MEMBER"],
+      ["DELETE_GROUP"],
+      ["DELETE_USER"],
     ]);
-    const event = (name: string) => changes.items!.find((activity) => activity.events[0].name === name)!;
-    expect(event("CREATE_USER")).toMatchObject({
+    const activity = (name: string) => changes.items!.find((a) => a.events.some((e) => e.name === name))!;
+    const event = (name: string) => activity(name).events.find((e) => e.name === name)!;
+    expect(activity("CREATE_USER")).toMatchObject({
       id: { applicationName: "admin", customerId: "C0clinic1" },
       actor: {
         callerType: "USER",
         email: admin,
         applicationInfo: { oauthClientId: desktop.client_id, applicationName: "IT console" },
       },
-      ownerDomain: "clinic.example",
       ipAddress: adminIp,
       events: [{ type: "USER_SETTINGS", name: "CREATE_USER", parameters: [{ name: "USER_EMAIL", value: nina }] }],
     });
-    expect(event("CHANGE_FIRST_NAME").events[0].parameters).toEqual([
+    expect(activity("CREATE_USER")).not.toHaveProperty("ownerDomain");
+    expect(event("CHANGE_FIRST_NAME").parameters).toEqual([
       { name: "NEW_VALUE", value: "Nadia" },
       { name: "OLD_VALUE", value: "Nina" },
       { name: "USER_EMAIL", value: nina },
     ]);
-    expect(event("MOVE_USER_TO_ORG_UNIT").events[0].parameters).toEqual([
+    expect(event("CHANGE_PASSWORD")).toEqual({
+      type: "USER_SETTINGS",
+      name: "CHANGE_PASSWORD",
+      parameters: [{ name: "USER_EMAIL", value: nina }],
+    });
+    expect(event("MOVE_USER_TO_ORG_UNIT").parameters).toEqual([
       { name: "NEW_VALUE", value: "/Nurses" },
       { name: "ORG_UNIT_NAME", value: "/" },
       { name: "USER_EMAIL", value: nina },
     ]);
-    expect(event("CHANGE_PASSWORD_ON_NEXT_LOGIN").events[0].parameters).toEqual([
+    expect(event("CHANGE_PASSWORD_ON_NEXT_LOGIN").parameters).toEqual([
       { name: "NEW_VALUE", value: "true" },
       { name: "OLD_VALUE", value: "false" },
       { name: "USER_EMAIL", value: nina },
     ]);
-    expect(event("GRANT_ADMIN_PRIVILEGE").events[0]).toMatchObject({ type: "USER_SETTINGS" });
-    expect(event("CHANGE_GROUP_NAME").events[0]).toEqual({
+    expect(event("GRANT_ADMIN_PRIVILEGE")).toMatchObject({ type: "USER_SETTINGS" });
+    expect(event("CHANGE_GROUP_NAME")).toEqual({
       type: "GROUP_SETTINGS",
       name: "CHANGE_GROUP_NAME",
       parameters: [
@@ -334,16 +342,65 @@ describe("Google Admin SDK Reports API", () => {
         { name: "NEW_VALUE", value: "Night nurses" },
       ],
     });
-    expect(event("UPDATE_GROUP_MEMBER").events[0].parameters).toEqual([
+    expect(event("ADD_GROUP_MEMBER").parameters).toEqual([
+      { name: "USER_EMAIL", value: nina },
+      { name: "GROUP_EMAIL", value: "nurses@clinic.example" },
+    ]);
+    expect(event("UPDATE_GROUP_MEMBER").parameters).toEqual([
       { name: "GROUP_EMAIL", value: "nurses@clinic.example" },
       { name: "NEW_VALUE", value: "MANAGER" },
       { name: "OLD_VALUE", value: "MEMBER" },
       { name: "USER_EMAIL", value: nina },
     ]);
-    expect(event("REMOVE_GROUP_MEMBER").events[0].parameters).toEqual([
+    expect(event("REMOVE_GROUP_MEMBER").parameters).toEqual([
       { name: "GROUP_EMAIL", value: "nurses@clinic.example" },
       { name: "USER_EMAIL", value: nina },
     ]);
+  });
+
+  it("records a sign-out and each application's tokens an administrator deletes", async () => {
+    const { grant, request, report } = fixture();
+    const auth = (await grant()).access_token;
+    await grant(staff, "openid email", "192.0.2.40", web, webRedirect);
+    await grant(staff, "openid", "192.0.2.40");
+    expect((await report(auth, "admin")).items).toBeUndefined();
+
+    expect((await request(`${directory}/users/${staff}/signOut`, auth, "POST")).status).toBe(200);
+    for (const client of [web, desktop, { client_id: "never-granted" }]) {
+      const deleted = await request(`${directory}/users/${staff}/tokens/${client.client_id}`, auth, "DELETE");
+      expect(deleted.status).toBe(200);
+    }
+
+    const after = (await report(auth, "admin")).items!.slice(0, 3);
+    expect(after.map((a) => a.events)).toEqual([
+      [
+        {
+          type: "USER_SETTINGS",
+          name: "REVOKE_3LO_TOKEN",
+          parameters: [
+            { name: "APP_ID", value: desktop.client_id },
+            { name: "USER_EMAIL", value: staff },
+          ],
+        },
+      ],
+      [
+        {
+          type: "USER_SETTINGS",
+          name: "REVOKE_3LO_TOKEN",
+          parameters: [
+            { name: "APP_ID", value: web.client_id },
+            { name: "USER_EMAIL", value: staff },
+          ],
+        },
+      ],
+      [{ type: "USER_SETTINGS", name: "RESET_SIGNIN_COOKIES", parameters: [{ name: "USER_EMAIL", value: staff }] }],
+    ]);
+    for (const activity of after) {
+      expect(activity.actor).toMatchObject({ callerType: "USER", email: admin });
+      expect(activity.ipAddress).toBe(adminIp);
+    }
+    // The owner's token report gets no revocation of its own.
+    expect((await report(auth, "token", "?eventName=revoke", staff)).items).toBeUndefined();
   });
 
   it("filters by user, event name, parameters, time and address, newest first, in pages", async () => {
