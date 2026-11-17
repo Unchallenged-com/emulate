@@ -452,11 +452,13 @@ export function cors(options: CorsOptions = {}): MiddlewareHandler {
   };
 }
 
-const clientAddresses = new WeakMap<Request, string>();
+// Each service package bundles its own copy of this module, so the address travels on the request under a global
+// symbol rather than in module state that the listener's copy would not share.
+const CLIENT_ADDRESS = Symbol.for("@emulators/core/client-address");
 
 /** Records the address of the client a request came from, for runtimes that hand requests to `fetch` themselves. */
 export function setClientAddress(request: Request, address: string): void {
-  clientAddresses.set(request, unmapIpv4(address));
+  Object.defineProperty(request, CLIENT_ADDRESS, { value: unmapIpv4(address), configurable: true });
 }
 
 /**
@@ -465,7 +467,7 @@ export function setClientAddress(request: Request, address: string): void {
  * as for requests made with `app.request`.
  */
 export function clientAddress(request: Request): string | undefined {
-  const peer = clientAddresses.get(request);
+  const peer = (request as Request & { [CLIENT_ADDRESS]?: string })[CLIENT_ADDRESS];
   if (!peer || !isLoopback(peer)) return peer;
   const forwarded = request.headers
     .get("X-Forwarded-For")
