@@ -268,6 +268,17 @@ const document = {
       type: "object",
       id: "User",
     },
+    UserMakeAdmin: {
+      properties: {
+        status: {
+          type: "boolean",
+          description: "Indicates the administrator status of the user.",
+          annotations: { required: ["directory.users.makeAdmin"] },
+        },
+      },
+      type: "object",
+      id: "UserMakeAdmin",
+    },
     UserName: {
       id: "UserName",
       type: "object",
@@ -845,6 +856,25 @@ const document = {
           scopes: ["https://www.googleapis.com/auth/admin.directory.user.security"],
           httpMethod: "POST",
           id: "directory.users.signOut",
+        },
+        makeAdmin: {
+          path: "admin/directory/v1/users/{userKey}/makeAdmin",
+          description: "Makes a user a super administrator.",
+          httpMethod: "POST",
+          scopes: ["https://www.googleapis.com/auth/admin.directory.user"],
+          parameterOrder: ["userKey"],
+          id: "directory.users.makeAdmin",
+          flatPath: "admin/directory/v1/users/{userKey}/makeAdmin",
+          request: { $ref: "UserMakeAdmin" },
+          parameters: {
+            userKey: {
+              type: "string",
+              required: true,
+              location: "path",
+              description:
+                "Identifies the user in the API request. The value can be the user's primary email address, alias email address, or unique user ID.",
+            },
+          },
         },
       },
     },
