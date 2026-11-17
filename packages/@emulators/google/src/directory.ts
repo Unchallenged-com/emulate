@@ -1,6 +1,7 @@
 import { createHash, randomInt } from "node:crypto";
 import type { Context, Store } from "@emulators/core";
 import type { GoogleGroup, GoogleGroupMember, GoogleUser } from "./entities.js";
+import { getAuthenticatedEmail, googleApiError } from "./helpers.js";
 import { getGoogleStore, type GoogleStore } from "./store.js";
 
 const CUSTOMER_ID_KEY = "google.directory.customerId";
@@ -303,4 +304,26 @@ export function directoryAuthError(c: Context): Response {
     },
     401,
   );
+}
+
+/**
+ * The caller, who must be a super administrator in strict mode: the Directory API is an administrator API
+ * (https://developers.google.com/workspace/admin/directory/v1/guides/authorizing), and users.makeAdmin can only be
+ * performed by "an account's super administrator". The Reports API is too: its activity reports are "usage reports and
+ * audit logs" an administrator's Reports privilege gives access to
+ * (https://knowledge.workspace.google.com/admin/users/administrator-privilege-definitions). Delegated administrator
+ * roles are not modeled.
+ */
+export function requireSuperAdmin(c: Context, store: Store): GoogleUser | Response {
+  const email = getAuthenticatedEmail(c);
+  const user = email ? findUserByKey(getGoogleStore(store), email) : undefined;
+  if (!email) {
+    return directoryAuthError(c);
+  }
+  if (store.getData<boolean>("google.strict_scopes") === true && (!user || user.is_admin !== true)) {
+    // GAM's documentation shows this answer: "403: Not Authorized to access this resource/api - forbidden"
+    // (GAM-team/GAM wiki/legacy/l-GAM-options-files.md).
+    return googleApiError(c, 403, "Not Authorized to access this resource/api", "forbidden", "PERMISSION_DENIED");
+  }
+  return user ?? ({ email } as GoogleUser);
 }

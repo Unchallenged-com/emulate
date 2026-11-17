@@ -40,6 +40,32 @@ export interface GoogleGroupMember extends Entity {
   delivery_settings: string;
 }
 
+/** A parameter of an audit event, in the Reports API's value forms. */
+export type GoogleActivityParameter =
+  | { name: string; value: string }
+  | { name: string; multiValue: string[] }
+  | { name: string; boolValue: boolean };
+
+export interface GoogleActivityEvent {
+  type: string;
+  name: string;
+  parameters: GoogleActivityParameter[];
+}
+
+/** An audit record the Reports API serves (`activities.list`). */
+export interface GoogleActivity extends Entity {
+  application_name: "admin" | "login" | "token";
+  time: string;
+  unique_qualifier: string;
+  actor_email: string;
+  actor_profile_id: string;
+  actor_oauth_client_id: string | null;
+  actor_application_name: string | null;
+  owner_domain: string | null;
+  ip_address: string | null;
+  events: GoogleActivityEvent[];
+}
+
 export interface GoogleOAuthClient extends Entity {
   client_id: string;
   client_secret: string;

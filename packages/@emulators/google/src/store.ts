@@ -3,6 +3,7 @@ import type {
   GoogleUser,
   GoogleGroup,
   GoogleGroupMember,
+  GoogleActivity,
   GoogleOAuthClient,
   GoogleMessage,
   GoogleDraft,
@@ -21,6 +22,7 @@ export interface GoogleStore {
   users: Collection<GoogleUser>;
   groups: Collection<GoogleGroup>;
   groupMembers: Collection<GoogleGroupMember>;
+  activities: Collection<GoogleActivity>;
   oauthClients: Collection<GoogleOAuthClient>;
   messages: Collection<GoogleMessage>;
   drafts: Collection<GoogleDraft>;
@@ -44,6 +46,7 @@ export function getGoogleStore(store: Store): GoogleStore {
       "member_id",
       "email",
     ]),
+    activities: store.collection<GoogleActivity>("google.activities", ["application_name", "actor_profile_id"]),
     oauthClients: store.collection<GoogleOAuthClient>("google.oauth_clients", ["client_id"]),
     messages: store.collection<GoogleMessage>("google.messages", ["gmail_id", "thread_id", "user_email"]),
     drafts: store.collection<GoogleDraft>("google.drafts", ["gmail_id", "message_gmail_id", "user_email"]),
