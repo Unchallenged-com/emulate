@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { Agent, request as httpRequest } from "node:http";
 import { connect, createServer, type AddressInfo, type Server } from "node:net";
-import { Hono, assertPortFree, cors, serve } from "../http.js";
+import { Hono, assertPortFree, clientAddress, cors, serve } from "../http.js";
 
 describe("HTTP listener", () => {
   it("answers 400 for a Host that is not a plain authority and keeps the connection usable", async () => {
@@ -281,6 +281,50 @@ describe("HTTP listener", () => {
       }
     },
   );
+});
+
+describe("client address", () => {
+  async function addressSeen(headers: Record<string, string>, hostname?: string, url = "http://127.0.0.1") {
+    const server = serve({
+      fetch: (request) => new Response(clientAddress(request) ?? "none"),
+      port: 0,
+      hostname,
+    });
+    try {
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      return await (await fetch(`${url}:${port}`, { headers })).text();
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+        server.closeAllConnections();
+      });
+    }
+  }
+
+  it("is the connection's peer", async () => {
+    expect(await addressSeen({})).toBe("127.0.0.1");
+  });
+
+  it("is the address a proxy on the loopback interface added to X-Forwarded-For", async () => {
+    expect(await addressSeen({ "X-Forwarded-For": "203.0.113.9, 198.51.100.7" })).toBe("198.51.100.7");
+    expect(await addressSeen({ "X-Forwarded-For": "::ffff:198.51.100.7" })).toBe("198.51.100.7");
+  });
+
+  it("ignores X-Forwarded-For from a peer that is not on the loopback interface", async () => {
+    const { networkInterfaces } = await import("node:os");
+    const external = Object.values(networkInterfaces())
+      .flat()
+      .find((iface) => iface && iface.family === "IPv4" && !iface.internal)?.address;
+    if (!external) return;
+    expect(await addressSeen({ "X-Forwarded-For": "198.51.100.7" }, "0.0.0.0", `http://${external}`)).toBe(external);
+  });
+
+  it("is unknown for requests that did not come through a listener", async () => {
+    const app = new Hono();
+    app.get("/", (c) => c.text(clientAddress(c.req.raw) ?? "none"));
+    expect(await (await app.request("/", { headers: { "X-Forwarded-For": "198.51.100.7" } })).text()).toBe("none");
+  });
 });
 
 describe("internal http layer", () => {
