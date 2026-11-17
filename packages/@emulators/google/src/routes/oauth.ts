@@ -15,7 +15,8 @@ import {
 } from "@emulators/core";
 import { getGoogleStore } from "../store.js";
 import type { GoogleUser } from "../entities.js";
-import { getRefreshTokens, issueAccessToken, revokeToken } from "../oauth-tokens.js";
+import { getRefreshTokens, issueAccessToken, revokeToken, tokenGrant } from "../oauth-tokens.js";
+import { recordLoginEvent, recordTokenEvent } from "../reports.js";
 
 // RSA key pair generated at module load for signing ID tokens.
 const keyPairPromise = generateKeyPair("RS256");
@@ -212,12 +213,16 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
     // page shows then is not captured: the page and its 403 are the emulator's own.
     const user = gs.users.findOneBy("email", email as GoogleUser["email"]);
     if (user?.suspended === true) {
+      recordLoginEvent(c, store, user, "login_failure");
       return c.html(
         renderErrorPage("Account suspended", "This account has been suspended by an administrator.", SERVICE_LABEL),
         403,
       );
     }
     if (user) gs.users.update(user.id, { last_login_time: new Date().toISOString() });
+    // Signing in on the emulator's page is both the sign-in and the user's consent to the client.
+    recordLoginEvent(c, store, user, "login_success");
+    recordTokenEvent(c, store, email, "authorize", client_id, scope);
 
     const code = randomBytes(20).toString("hex");
 
@@ -436,7 +441,9 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
     }
 
     if (token) {
+      const grant = tokenGrant(store, token);
       revokeToken(store, tokenMap, token);
+      if (grant) recordTokenEvent(c, store, grant.email, "revoke", grant.clientId, grant.scope);
     }
 
     return c.body(null, 200);

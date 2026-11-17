@@ -106,6 +106,11 @@ Google Admin SDK Directory:
   users/:userKey/tokens lists a user's application tokens; deleting one ends that client's access and refresh tokens.
   POST users/:userKey/signOut keeps the tokens the user issued to applications, as Google does.
 
+Google Admin SDK Reports:
+  activities.list under /admin/reports/v1 for the login, token, and admin applications; discovery at
+  /$discovery/rest?version=reports_v1. Records sign-ins, grants and revocations, Directory changes, sign-outs and token deletions.
+  In strict mode, calls need admin.reports.audit.readonly and a super administrator.
+
 Google OIDC:
   Discovery advertises RS256 ID tokens, and GET /oauth2/v3/certs returns the RSA public key used to verify them.
   Set google.strict_scopes: true in seed config to validate issued access tokens, expiry, revocation, and method scopes.

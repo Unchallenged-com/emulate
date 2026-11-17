@@ -182,7 +182,7 @@ google:
 
 When no OAuth clients are configured, the emulator accepts any `client_id`. With clients configured, strict validation is enforced for `client_id`, `client_secret`, and `redirect_uri`.
 
-Google authentication is permissive by default for local bearer-token workflows. Set `google.strict_scopes: true` in seed config to require emulator-issued, unexpired access tokens on Gmail, Calendar, Drive, Directory, and userinfo routes. Invalid credentials return `401 UNAUTHENTICATED`; missing method scopes return `403` with `insufficientPermissions`. Strict mode distinguishes read, write, send, settings, and metadata scopes, and userinfo includes only granted identity claims. Revoking an access or refresh token invalidates the linked access and refresh credentials. Discovery, signing keys, and the sign-in page remain public. This mode checks method scopes; resource-specific grants such as `drive.file` and Gmail add-on scopes are not modeled.
+Google authentication is permissive by default for local bearer-token workflows. Set `google.strict_scopes: true` in seed config to require emulator-issued, unexpired access tokens on Gmail, Calendar, Drive, Directory, Reports, and userinfo routes. Invalid credentials return `401 UNAUTHENTICATED`; missing method scopes return `403` with `insufficientPermissions`. Strict mode distinguishes read, write, send, settings, and metadata scopes, and userinfo includes only granted identity claims. Revoking an access or refresh token invalidates the linked access and refresh credentials. Discovery, signing keys, and the sign-in page remain public. This mode checks method scopes; resource-specific grants such as `drive.file` and Gmail add-on scopes are not modeled.
 
 ### Hosted domain (hd) claim
 
@@ -599,6 +599,24 @@ curl -X POST http://localhost:4002/admin/directory/v1/groups/nurses@acme.com/mem
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"email": "nina@acme.com", "role": "MEMBER"}'
+```
+
+## Google Admin SDK Reports API
+
+Admin SDK Reports API: `activities.list` at `/admin/reports/v1/activity/users/:userKey/applications/:applicationName`, with the discovery document at `/discovery/v1/apis/admin/reports_v1/rest` and `/$discovery/rest?version=reports_v1`. The emulator records the activity of the account's users in three applications: `login` (`login_success` when a user signs in, `login_failure` when a suspended user tries), `token` (`authorize` when a user grants a client access, `revoke` when one of its tokens is revoked at `/oauth2/revoke`), and `admin` (the Directory API changes an administrator makes to users, administrator status, sign-in cookies (`users.signOut`), application tokens (`tokens.delete`), groups, and group members, one activity per request). Each activity carries its actor, the client's address (behind a proxy on the loopback interface, the address it adds to `X-Forwarded-For`), and, for administrator changes, the OAuth client used. The list honors `userKey` (`all`, an email address, or a profile ID), `eventName`, `filters`, `startTime`, `endTime`, `actorIpAddress`, `customerId`, `maxResults`, and `pageToken`, newest first; the other applications return an empty report. With `google.strict_scopes: true`, it needs the `admin.reports.audit.readonly` scope and a super administrator. Organizational unit and group filters, usage reports, push notifications, and the other events Google documents are not modeled.
+
+```bash
+# Sign-ins of the last 180 days (needs admin.reports.audit.readonly and a super administrator in strict mode)
+curl "http://localhost:4002/admin/reports/v1/activity/users/all/applications/login" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Refused sign-ins of one user since a date
+curl "http://localhost:4002/admin/reports/v1/activity/users/nina@acme.com/applications/login?eventName=login_failure&startTime=2026-01-01T00:00:00Z" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Administrator changes to one user
+curl "http://localhost:4002/admin/reports/v1/activity/users/all/applications/admin?filters=USER_EMAIL==nina@acme.com" \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 ## Common Patterns

@@ -372,6 +372,49 @@ describe("createEmulator", () => {
     }
   });
 
+  it("records the client address of Google sign-ins in the Reports API", async () => {
+    const admin = "admin@example.com";
+    const google = await createEmulator({
+      service: "google",
+      port: 0,
+      seed: { google: { strict_scopes: true, users: [{ email: admin, is_admin: true }] } },
+    });
+    const signIn = (headers: Record<string, string>) =>
+      fetch(`${google.url}/o/oauth2/v2/auth/callback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded", ...headers },
+        body: new URLSearchParams({
+          email: admin,
+          client_id: "reports-client",
+          redirect_uri: "http://127.0.0.1:8080/",
+          scope: "https://www.googleapis.com/auth/admin.reports.audit.readonly",
+        }),
+        redirect: "manual",
+      });
+
+    expect((await signIn({})).status).toBe(302);
+    const location = (await signIn({ "X-Forwarded-For": "198.51.100.7" })).headers.get("Location")!;
+    const exchange = await fetch(`${google.url}/oauth2/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code: new URL(location).searchParams.get("code")!,
+        client_id: "reports-client",
+        redirect_uri: "http://127.0.0.1:8080/",
+      }),
+    });
+    const { access_token } = (await exchange.json()) as { access_token: string };
+    const report = await fetch(`${google.url}/admin/reports/v1/activity/users/all/applications/login`, {
+      headers: { Authorization: `Bearer ${access_token}` },
+    });
+    expect(report.status).toBe(200);
+    const { items } = (await report.json()) as { items: Array<{ ipAddress?: string }> };
+    expect(items.map((item) => item.ipAddress)).toEqual(["198.51.100.7", "127.0.0.1"]);
+
+    await google.close();
+  });
+
   it("throws on unknown service", async () => {
     // @ts-expect-error testing invalid service name
     await expect(createEmulator({ service: "unknown-svc" })).rejects.toThrow("Unknown service");
