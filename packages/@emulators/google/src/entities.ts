@@ -61,7 +61,6 @@ export interface GoogleActivity extends Entity {
   actor_profile_id: string;
   actor_oauth_client_id: string | null;
   actor_application_name: string | null;
-  owner_domain: string | null;
   ip_address: string | null;
   events: GoogleActivityEvent[];
 }

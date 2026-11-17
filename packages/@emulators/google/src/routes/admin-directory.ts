@@ -25,7 +25,7 @@ import type { GoogleGroup, GoogleGroupMember, GoogleUser } from "../entities.js"
 import { googleApiError } from "../helpers.js";
 import { clientGrants, revokeClientTokens } from "../oauth-tokens.js";
 import { parseGoogleBody } from "../route-helpers.js";
-import { param, recordAdminEvent } from "../reports.js";
+import { groupEvent, param, recordAdminActivity, userEvent } from "../reports.js";
 import { getGoogleStore } from "../store.js";
 
 const PREFIX = "/admin/directory/v1";
@@ -229,7 +229,7 @@ export function adminDirectoryRoutes({ app, store, baseUrl, tokenMap }: RouteCon
       creation_time: now,
       last_login_time: null,
     });
-    recordAdminEvent(c, store, "USER_SETTINGS", "CREATE_USER", [param("USER_EMAIL", user.email)]);
+    recordAdminActivity(c, store, [userEvent("CREATE_USER", param("USER_EMAIL", user.email))]);
     return json(c, userResource(store, user));
   });
 
@@ -272,8 +272,9 @@ export function adminDirectoryRoutes({ app, store, baseUrl, tokenMap }: RouteCon
     if (gal !== undefined) changes.include_in_global_address_list = gal;
 
     const updated = gs.users.update(user.id, changes) ?? user;
+    const events: ReturnType<typeof userEvent>[] = [];
     const audit = (name: string, ...parameters: ReturnType<typeof param>[]) =>
-      recordAdminEvent(c, store, "USER_SETTINGS", name, [...parameters, param("USER_EMAIL", user.email)]);
+      events.push(userEvent(name, ...parameters, param("USER_EMAIL", user.email)));
     if (updated.given_name !== user.given_name) {
       audit("CHANGE_FIRST_NAME", param("NEW_VALUE", updated.given_name), param("OLD_VALUE", user.given_name));
     }
@@ -294,6 +295,7 @@ export function adminDirectoryRoutes({ app, store, baseUrl, tokenMap }: RouteCon
         param("OLD_VALUE", String(oldChangePassword)),
       );
     }
+    recordAdminActivity(c, store, events);
     return json(c, userResource(store, updated));
   };
   app.put(`${PREFIX}/users/:userKey`, updateUser);
@@ -306,7 +308,7 @@ export function adminDirectoryRoutes({ app, store, baseUrl, tokenMap }: RouteCon
     if (!user) return notFound(c, USER_NOT_FOUND);
     removeMemberships(store, user.uid);
     gs.users.delete(user.id);
-    recordAdminEvent(c, store, "USER_SETTINGS", "DELETE_USER", [param("USER_EMAIL", user.email)]);
+    recordAdminActivity(c, store, [userEvent("DELETE_USER", param("USER_EMAIL", user.email))]);
     return empty(c);
   });
 
@@ -324,7 +326,7 @@ export function adminDirectoryRoutes({ app, store, baseUrl, tokenMap }: RouteCon
     gs.users.update(user.id, { is_admin: status });
     if (status !== (user.is_admin === true)) {
       const name = status ? "GRANT_ADMIN_PRIVILEGE" : "REVOKE_ADMIN_PRIVILEGE";
-      recordAdminEvent(c, store, "USER_SETTINGS", name, [param("USER_EMAIL", user.email)]);
+      recordAdminActivity(c, store, [userEvent(name, param("USER_EMAIL", user.email))]);
     }
     return empty(c);
   });
@@ -339,6 +341,9 @@ export function adminDirectoryRoutes({ app, store, baseUrl, tokenMap }: RouteCon
     if (admin instanceof Response) return admin;
     const user = findUserByKey(gs, c.req.param("userKey") ?? "");
     if (!user) return notFound(c, USER_NOT_FOUND);
+    // The Admin event of a sign-in cookie reset: "Cookies reset for {USER_EMAIL} and forced re-login"
+    // (https://developers.google.com/workspace/admin/reports/v1/appendix/activity/admin-user-settings).
+    recordAdminActivity(c, store, [userEvent("RESET_SIGNIN_COOKIES", param("USER_EMAIL", user.email))]);
     return empty(c);
   });
 
@@ -375,7 +380,17 @@ export function adminDirectoryRoutes({ app, store, baseUrl, tokenMap }: RouteCon
     if (admin instanceof Response) return admin;
     const user = findUserByKey(gs, c.req.param("userKey") ?? "");
     if (!user) return notFound(c, USER_NOT_FOUND);
-    revokeClientTokens(store, tokenMap, user.email, c.req.param("clientId") ?? "");
+    const clientId = c.req.param("clientId") ?? "";
+    const granted = clientGrants(store, user.email).has(clientId);
+    revokeClientTokens(store, tokenMap, user.email, clientId);
+    // "3-legged OAuth tokens issued by user {USER_EMAIL} for application {APP_ID} were revoked", with the client ID
+    // as the application's (https://developers.google.com/workspace/admin/reports/v1/appendix/activity/
+    // admin-user-settings), when there was a token to revoke.
+    if (granted) {
+      recordAdminActivity(c, store, [
+        userEvent("REVOKE_3LO_TOKEN", param("APP_ID", clientId), param("USER_EMAIL", user.email)),
+      ]);
+    }
     return empty(c);
   });
 
@@ -433,7 +448,7 @@ export function adminDirectoryRoutes({ app, store, baseUrl, tokenMap }: RouteCon
       description,
       admin_created: true,
     });
-    recordAdminEvent(c, store, "GROUP_SETTINGS", "CREATE_GROUP", [param("GROUP_EMAIL", group.email)]);
+    recordAdminActivity(c, store, [groupEvent("CREATE_GROUP", param("GROUP_EMAIL", group.email))]);
     return json(c, groupResource(gs, group));
   });
 
@@ -456,15 +471,14 @@ export function adminDirectoryRoutes({ app, store, baseUrl, tokenMap }: RouteCon
       changes.description = description;
     }
     const updated = gs.groups.update(group.id, changes) ?? group;
+    const events: ReturnType<typeof groupEvent>[] = [];
     if (updated.name !== group.name) {
-      recordAdminEvent(c, store, "GROUP_SETTINGS", "CHANGE_GROUP_NAME", [
-        param("GROUP_EMAIL", group.email),
-        param("NEW_VALUE", updated.name),
-      ]);
+      events.push(groupEvent("CHANGE_GROUP_NAME", param("GROUP_EMAIL", group.email), param("NEW_VALUE", updated.name)));
     }
     if (updated.description !== group.description) {
-      recordAdminEvent(c, store, "GROUP_SETTINGS", "CHANGE_GROUP_DESCRIPTION", [param("GROUP_EMAIL", group.email)]);
+      events.push(groupEvent("CHANGE_GROUP_DESCRIPTION", param("GROUP_EMAIL", group.email)));
     }
+    recordAdminActivity(c, store, events);
     return json(c, groupResource(gs, updated));
   };
   app.put(`${PREFIX}/groups/:groupKey`, updateGroup);
@@ -477,7 +491,7 @@ export function adminDirectoryRoutes({ app, store, baseUrl, tokenMap }: RouteCon
     if (!group) return notFound(c, GROUP_NOT_FOUND);
     removeMemberships(store, group.google_id);
     gs.groups.delete(group.id);
-    recordAdminEvent(c, store, "GROUP_SETTINGS", "DELETE_GROUP", [param("GROUP_EMAIL", group.email)]);
+    recordAdminActivity(c, store, [groupEvent("DELETE_GROUP", param("GROUP_EMAIL", group.email))]);
     return empty(c);
   });
 
@@ -579,9 +593,9 @@ export function adminDirectoryRoutes({ app, store, baseUrl, tokenMap }: RouteCon
       type: user ? "USER" : memberGroup ? "GROUP" : "EXTERNAL",
       delivery_settings: str(body.delivery_settings) ?? "ALL_MAIL",
     });
-    recordAdminEvent(c, store, "GROUP_SETTINGS", "ADD_GROUP_MEMBER", [
-      param("GROUP_EMAIL", group.email),
-      param("USER_EMAIL", member.email),
+    // The member before the group, as captured responses list them.
+    recordAdminActivity(c, store, [
+      groupEvent("ADD_GROUP_MEMBER", param("USER_EMAIL", member.email), param("GROUP_EMAIL", group.email)),
     ]);
     return json(c, memberResource(member));
   });
@@ -602,11 +616,14 @@ export function adminDirectoryRoutes({ app, store, baseUrl, tokenMap }: RouteCon
     if (delivery !== undefined) changes.delivery_settings = delivery;
     const updated = gs.groupMembers.update(member.id, changes) ?? member;
     if (updated.role !== member.role) {
-      recordAdminEvent(c, store, "GROUP_SETTINGS", "UPDATE_GROUP_MEMBER", [
-        param("GROUP_EMAIL", group.email),
-        param("NEW_VALUE", updated.role),
-        param("OLD_VALUE", member.role),
-        param("USER_EMAIL", member.email),
+      recordAdminActivity(c, store, [
+        groupEvent(
+          "UPDATE_GROUP_MEMBER",
+          param("GROUP_EMAIL", group.email),
+          param("NEW_VALUE", updated.role),
+          param("OLD_VALUE", member.role),
+          param("USER_EMAIL", member.email),
+        ),
       ]);
     }
     return json(c, memberResource(updated));
@@ -620,9 +637,8 @@ export function adminDirectoryRoutes({ app, store, baseUrl, tokenMap }: RouteCon
     const member = findMember(gs, group, c.req.param("memberKey") ?? "");
     if (!member) return memberMissing(c, c.req.param("memberKey") ?? "");
     gs.groupMembers.delete(member.id);
-    recordAdminEvent(c, store, "GROUP_SETTINGS", "REMOVE_GROUP_MEMBER", [
-      param("GROUP_EMAIL", group.email),
-      param("USER_EMAIL", member.email),
+    recordAdminActivity(c, store, [
+      groupEvent("REMOVE_GROUP_MEMBER", param("GROUP_EMAIL", group.email), param("USER_EMAIL", member.email)),
     ]);
     return empty(c);
   });
