@@ -74,7 +74,7 @@ export function findMember(gs: GoogleStore, group: GoogleGroup, key: string): Go
 
 // Etags are two base64url parts joined by a slash, in quotes ("BvGfkzKoKVD0NM7VdXdzkXDD-nHLkyMjheL_9Z5X0H0/
 // oMJEIb2O8LE-zfPM0TV_9m3WkMA" in a real response).
-function etagOf(resource: Record<string, unknown>): string {
+export function etagOf(resource: unknown): string {
   const hash = createHash("sha256").update(JSON.stringify(resource)).digest("base64url");
   return `"${hash.slice(0, 43)}/${hash.slice(8, 35)}"`;
 }
@@ -111,6 +111,42 @@ export function userResource(store: Store, user: GoogleUser): Record<string, unk
     includeInGlobalAddressList: user.include_in_global_address_list ?? true,
     isEnrolledIn2Sv: false,
     isEnforcedIn2Sv: false,
+  };
+  return { ...resource, etag: etagOf(resource) };
+}
+
+// Desktop apps redirect to "http://127.0.0.1:port or http://[::1]:port", and "it is also possible to use localhost in
+// place of the loopback IP" (https://developers.google.com/identity/protocols/oauth2/native-app).
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "[::1]", "localhost"]);
+
+function isLoopbackRedirect(uri: string): boolean {
+  try {
+    const url = new URL(uri);
+    return url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+/** A user's token for one client (https://developers.google.com/workspace/admin/directory/reference/rest/v1/tokens).
+ * `nativeApp` is "true if the application is installed to a desktop or mobile device": a client whose redirect URIs
+ * are all on the loopback interface, as a desktop app's are. Every client is registered here, so none is anonymous. */
+export function tokenResource(
+  gs: GoogleStore,
+  user: GoogleUser,
+  clientId: string,
+  scopes: string[],
+): Record<string, unknown> {
+  const client = gs.oauthClients.findOneBy("client_id", clientId);
+  const redirectUris = client?.redirect_uris ?? [];
+  const resource: Record<string, unknown> = {
+    kind: "admin#directory#token",
+    clientId,
+    displayText: client?.name ?? clientId,
+    anonymous: false,
+    nativeApp: redirectUris.length > 0 && redirectUris.every(isLoopbackRedirect),
+    userKey: user.uid,
+    scopes,
   };
   return { ...resource, etag: etagOf(resource) };
 }
