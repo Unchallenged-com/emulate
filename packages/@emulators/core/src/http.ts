@@ -452,6 +452,40 @@ export function cors(options: CorsOptions = {}): MiddlewareHandler {
   };
 }
 
+// Each service package bundles its own copy of this module, so the address travels on the request under a global
+// symbol rather than in module state that the listener's copy would not share.
+const CLIENT_ADDRESS = Symbol.for("@emulators/core/client-address");
+
+/** Records the address of the client a request came from, for runtimes that hand requests to `fetch` themselves. */
+export function setClientAddress(request: Request, address: string): void {
+  Object.defineProperty(request, CLIENT_ADDRESS, { value: unmapIpv4(address), configurable: true });
+}
+
+/**
+ * The address of the client a request came from: the connection's peer, or, when the peer is a proxy on the loopback
+ * interface, the last address in `X-Forwarded-For` (the one that proxy added). Undefined when nothing recorded it,
+ * as for requests made with `app.request`.
+ */
+export function clientAddress(request: Request): string | undefined {
+  const peer = (request as Request & { [CLIENT_ADDRESS]?: string })[CLIENT_ADDRESS];
+  if (!peer || !isLoopback(peer)) return peer;
+  const forwarded = request.headers
+    .get("X-Forwarded-For")
+    ?.split(",")
+    .map((address) => address.trim())
+    .filter(Boolean)
+    .at(-1);
+  return forwarded ? unmapIpv4(forwarded) : peer;
+}
+
+function unmapIpv4(address: string): string {
+  return address.replace(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i, "$1");
+}
+
+function isLoopback(address: string): boolean {
+  return address === "::1" || /^127\./.test(address);
+}
+
 export function serve(options: ServeOptions): Server {
   const port = options.port ?? 3000;
   const server = createNodeServer(async (req, res) => {
@@ -462,6 +496,7 @@ export function serve(options: ServeOptions): Server {
     if (controller) res.once("close", onClose);
     try {
       const request = nodeRequestToFetchRequest(req, controller?.signal);
+      if (req.socket.remoteAddress) setClientAddress(request, req.socket.remoteAddress);
       const response = await options.fetch(request);
       await writeFetchResponse(res, response, req.method?.toUpperCase() === "HEAD", controller?.signal);
     } catch (err) {
