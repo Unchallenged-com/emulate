@@ -271,7 +271,7 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
     }
     if (user) gs.users.update(user.id, { last_login_time: new Date().toISOString() });
     // Signing in on the emulator's page is both the sign-in and the user's consent to the client. A user with an SSO
-    // profile signed in at the identity provider instead.
+    // profile signed in at the identity provider instead, and the ACS recorded that sign-in.
     if (!profile) recordLoginEvent(c, store, user, "login_success");
     recordTokenEvent(c, store, email, "authorize", client_id, scope);
 
