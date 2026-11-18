@@ -34,6 +34,7 @@ export interface StartOptions {
   baseUrl?: string;
   portless?: boolean;
   generatedSecretsFile?: string;
+  persistence?: string;
 }
 
 interface SeedConfig {

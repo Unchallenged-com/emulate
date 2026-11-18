@@ -45,6 +45,7 @@ Custom emulators:
   Import defineEmulator, defineConfig, and createEmulator from 'emulate'.
   Test in process with createEmulator({ service: yourDefinition, listen: false }).
   Custom emulators support seeds, reset, snapshots, restore, and opt-in persistence.
+  Built-in services persist with --persistence <file> or services.<name>.persistence: saved state replaces the seed.
   Streamed responses persist state changes during delivery; reset and close cancel active streams before cleanup.
   Appended Set-Cookie headers retain cookies already on a response.
   Config accepts local TypeScript/JavaScript files and installed packages alongside built-ins.
@@ -211,6 +212,7 @@ Slack event callbacks:
       "--generated-secrets-file <path>",
       "Write service-generated secrets to a new owner-only JSON file (Linux requires setfacl and getfacl)",
     )
+    .option("--persistence <file>", "Save the selected service's state to a file and restore it on the next start")
     .action(async (opts) => {
       const port = parseInt(opts.port, 10);
       if (Number.isNaN(port) || port < 1 || port > 65535) throw new Error(`Invalid port: ${opts.port}`);
@@ -224,6 +226,7 @@ Slack event callbacks:
         baseUrl: opts.baseUrl,
         portless: opts.portless,
         generatedSecretsFile: opts.generatedSecretsFile,
+        persistence: opts.persistence,
       });
     });
 
