@@ -73,8 +73,11 @@ npx emulate list
 | `--base-url` | none | Override advertised base URL (supports `{service}` template) |
 | `--portless` | off | Serve over HTTPS via portless (auto-registers aliases) |
 | `--generated-secrets-file` | none | Generate omitted service secrets and write them to a new owner-only JSON file |
+| `--persistence` | none | Save the selected service's state to a file and restore it on the next start |
 
 The port can also be set via `EMULATE_PORT` or `PORT` environment variables.
+
+A built-in service saves its state with `--persistence <file>` (one selected service) or `services.<name>.persistence` in a project config. State is saved when the service starts listening, after each completed `POST`, `PUT`, `PATCH`, or `DELETE` request, and on shutdown, in an owner-only file replaced atomically. The next start restores the saved store and issued tokens instead of applying the seed, so seed changes apply only to a new file; `--watch` reloads reset to the seed. Persistence cannot be combined with generated secrets.
 
 For access from a container or another machine, use `npx emulate start --host 0.0.0.0`. Set `--base-url` to a URL reachable by those clients when using OAuth redirects or other advertised URLs.
 

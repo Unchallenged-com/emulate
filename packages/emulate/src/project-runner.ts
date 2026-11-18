@@ -18,6 +18,7 @@ import { closeHttpServer, waitForListening } from "./api.js";
 import { resolveBaseUrl } from "./base-url.js";
 import { portlessBaseUrl, type PortlessAlias } from "./portless.js";
 import type { GeneratedSecretRecord } from "./generated-secrets-file.js";
+import { builtinPersistence } from "./builtin-persistence.js";
 
 export interface ProjectOptions extends StartOptions {
   config?: string;
@@ -130,16 +131,35 @@ export async function prepareProject(
         item.port = port;
         const tokens = toTokens(config);
         const runtime = createPreparedServiceServer(item, tokens);
-        cleanups.push(() => {
+        const secrets = existing?.secrets ?? result.generatedSecrets;
+        if (service.persistence && secrets.length)
+          throw new Error(
+            `services.${service.name}: persistence cannot be combined with generated secrets. Provide the secrets in the seed.`,
+          );
+        const saved = service.persistence
+          ? builtinPersistence(service.persistence, service.emulator, runtime)
+          : undefined;
+        cleanups.push(async () => {
+          await saved?.close();
           runtime.webhooks.clear();
           runtime.store.reset();
         });
-        seedPreparedService(item, runtime.store, runtime.webhooks);
-        const secrets = existing?.secrets ?? result.generatedSecrets;
+        // A reload resets state to the seed, as for custom APIs.
+        const restored = saved && !reload ? await abortable(saved.restore(), signal) : false;
+        signal?.throwIfAborted();
+        if (!restored) seedPreparedService(item, runtime.store, runtime.webhooks);
+        if (saved)
+          activations.push(async () => {
+            if (!closed) await abortable(saved.enable(), signal);
+          });
         if (secrets.length)
           metadata.retained[service.name] = { emulator: service.emulator, input, config: item.svcSeedConfig!, secrets };
         metadata.secrets.push(...secrets);
-        prepared.push({ fetch: runtime.app.fetch, port, abortOnClose: item.loadedSvc.plugin.abortOnClose });
+        prepared.push({
+          fetch: saved ? saved.fetch(runtime.app.fetch) : runtime.app.fetch,
+          port,
+          abortOnClose: item.loadedSvc.plugin.abortOnClose,
+        });
         metadata.services.push({ name: service.name, port, url: baseUrl, source: service.source });
       } else {
         const persistence =

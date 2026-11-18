@@ -110,6 +110,7 @@ describe("MCP command discovery", () => {
         port: { type: "string", default: process.env.EMULATE_PORT ?? process.env.PORT ?? "4000" },
         host: { type: "string", default: "127.0.0.1" },
         generatedSecretsFile: { type: "string" },
+        persistence: { type: "string" },
         baseUrl: { type: "string" },
         watch: { type: "boolean" },
       },

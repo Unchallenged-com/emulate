@@ -48,7 +48,7 @@ const isRecord = (value: unknown): value is Record<string, any> =>
 export const isBuiltin = (value: string): value is ServiceName => Object.hasOwn(SERVICE_REGISTRY, value);
 
 export async function loadConfig(
-  options: { config?: string; seed?: string; service?: string; cwd?: string } = {},
+  options: { config?: string; seed?: string; service?: string; persistence?: string; cwd?: string } = {},
   onDependenciesChange?: (files: string[]) => void,
 ): Promise<LoadedConfig> {
   if (options.config && options.seed)
@@ -101,6 +101,8 @@ export async function loadConfig(
         ? Object.keys(entries)
         : [...SERVICE_NAMES];
     if (!selected.length || selected.some((s) => !s)) throw new Error("Select at least one service");
+    if (options.persistence !== undefined && selected.length !== 1)
+      throw new Error("--persistence saves one service's state. Select one service, or set persistence per service.");
     if (new Set(selected).size !== selected.length) throw new Error("A service cannot be selected more than once");
     const services: ResolvedService[] = [];
     for (const name of selected) {
@@ -134,16 +136,21 @@ export async function loadConfig(
         if (isBuiltin(name))
           throw new Error(`Custom service ${name} would replace a built-in. Choose another instance name.`);
       }
-      const persistence = entry.persistence;
+      if (options.persistence !== undefined && entry.persistence !== undefined)
+        throw new Error(`services.${name}.persistence and --persistence cannot be used together`);
+      const persistence =
+        options.persistence !== undefined
+          ? resolve(options.cwd ?? process.cwd(), options.persistence)
+          : entry.persistence;
       if (
         persistence !== undefined &&
         typeof persistence !== "string" &&
         (!isRecord(persistence) || typeof persistence.load !== "function" || typeof persistence.save !== "function")
       )
         throw new Error(`services.${name}.persistence must be a file path or persistence adapter`);
-      if (typeof emulator === "string" && (entry.inspector !== undefined || entry.persistence !== undefined))
+      if (typeof emulator === "string" && entry.inspector !== undefined)
         throw new Error(
-          `services.${name}: inspector and persistence options apply to custom APIs; built-ins retain their own inspectors and adapter persistence`,
+          `services.${name}: the inspector option applies to custom APIs; built-ins retain their own inspectors`,
         );
       services.push({
         ...entry,
