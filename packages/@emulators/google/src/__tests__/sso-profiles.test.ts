@@ -696,6 +696,64 @@ describe("Google Workspace SAML single sign-on", () => {
     });
   });
 
+  describe("Reports API", () => {
+    type Activity = { actor: { email: string }; events: Array<{ type: string; name: string; parameters: unknown[] }> };
+
+    async function logins(app: Hono): Promise<Activity[]> {
+      const res = await app.request(`${base}/admin/reports/v1/activity/users/all/applications/login`, {
+        headers: { Authorization: "Bearer any-token" },
+      });
+      expect(res.status).toBe(200);
+      return ((await res.json()) as { items?: Activity[] }).items ?? [];
+    }
+
+    it("records a sign-in through the profile as a saml login_success, and none at the authorization that follows", async () => {
+      const { app } = createTestApp();
+      const { requestId } = await startSso(app);
+      expect(await logins(app)).toEqual([]);
+
+      const res = await consume(app, buildResponse({ requestId }));
+      expect(res.status).toBe(302);
+      const recorded = await logins(app);
+      expect(recorded).toHaveLength(1);
+      expect(recorded[0]).toMatchObject({
+        actor: { email: "alice@acme.test" },
+        events: [
+          {
+            type: "login",
+            name: "login_success",
+            parameters: [
+              { name: "login_type", value: "saml" },
+              { name: "login_challenge_method", multiValue: ["saml"] },
+              { name: "is_suspicious", boolValue: false },
+            ],
+          },
+        ],
+      });
+
+      expectCode(await authorizeCallback(app, "alice@acme.test", sessionCookie(res)));
+      expect(await logins(app)).toHaveLength(1);
+    });
+
+    it("keeps password sign-ins of users without a profile as google_password", async () => {
+      const { app } = createTestApp();
+      expectCode(await authorizeCallback(app, "carol@acme.test"));
+      const [login] = await logins(app);
+      expect(login.actor.email).toBe("carol@acme.test");
+      expect(login.events[0].parameters.slice(0, 2)).toEqual([
+        { name: "login_type", value: "google_password" },
+        { name: "login_challenge_method", multiValue: ["password"] },
+      ]);
+    });
+
+    it("records nothing for a refused response", async () => {
+      const { app } = createTestApp();
+      const { requestId } = await startSso(app);
+      await expectRefused(await consume(app, buildResponse({ requestId, sign: "none" })), "is not signed");
+      expect(await logins(app)).toEqual([]);
+    });
+  });
+
   describe("seed config", () => {
     it("refuses a certificate whose key is neither DSA nor RSA, and unknown or doubly assigned users", () => {
       // A self-signed P-256 certificate (openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256).

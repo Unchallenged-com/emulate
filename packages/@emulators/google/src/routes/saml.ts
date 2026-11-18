@@ -1,5 +1,6 @@
 import type { RouteContext } from "@emulators/core";
 import { bodyStr, renderErrorPage, renderFormPostPage } from "@emulators/core";
+import { recordLoginEvent } from "../reports.js";
 import {
   SamlResponseError,
   consumeAssertionId,
@@ -47,6 +48,7 @@ export function samlRoutes({ app, store, baseUrl }: RouteContext): void {
       const request = takePendingAuthnRequest(store, profile, assertion, browserId, bodyStr(body.RelayState));
       consumeAssertionId(store, assertion);
       c.header("Set-Cookie", openWebSession(store, assertion.user, profile));
+      recordLoginEvent(c, store, assertion.user, "login_success", "saml");
       return c.redirect(request.continue_url, 302);
     } catch (error) {
       if (error instanceof SamlResponseError) {

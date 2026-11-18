@@ -47,19 +47,24 @@ function record(
   });
 }
 
-/** A sign-in event (`login_success`, `login_failure`) of the Login application, type `login`. */
+/**
+ * A sign-in event (`login_success`, `login_failure`) of the Login application, type `login`. The emulator's sign-in
+ * page stands for a password sign-in: `google_password`, "The user provides a Google account password", with the
+ * `password` challenge. A sign-in through an SSO profile is `saml`, "The user provides a SAML assertion from a SAML
+ * identity provider", the description Google gives both the login type and the challenge method.
+ */
 export function recordLoginEvent(
   c: Context,
   store: Store,
   user: GoogleUser | undefined,
   name: "login_success" | "login_failure",
+  loginType: "google_password" | "saml" = "google_password",
 ): void {
   if (!inAccount(user)) return;
-  // The emulator's sign-in stands for a password sign-in: `google_password`, "The user provides a Google account
-  // password", with the `password` challenge. It does not assess risk, so no sign-in is suspicious.
+  // The emulator does not assess risk, so no sign-in is suspicious.
   const parameters: GoogleActivityParameter[] = [
-    param("login_type", "google_password"),
-    { name: "login_challenge_method", multiValue: ["password"] },
+    param("login_type", loginType),
+    { name: "login_challenge_method", multiValue: [loginType === "saml" ? "saml" : "password"] },
   ];
   if (name === "login_success") parameters.push({ name: "is_suspicious", boolValue: false });
   // A suspended user is the documented `login_failure_account_disabled`: "The user's account is disabled."
