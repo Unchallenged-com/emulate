@@ -11,6 +11,8 @@ import {
 
 const FORMAT_VERSION = 1;
 const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+/** Serializing the whole state takes time proportional to its size, so it runs at most this often, after responses. */
+const SAVE_INTERVAL_MS = 1000;
 
 interface BuiltinSnapshot {
   formatVersion: typeof FORMAT_VERSION;
@@ -48,8 +50,9 @@ function parseSnapshot(raw: string, emulator: string): BuiltinSnapshot {
 }
 
 /**
- * Saves and restores a built-in service's store and tokens. State is saved after each completed mutating request and
- * when the service closes; saves never overlap, and requests completed during a save are covered by one more save.
+ * Saves and restores a built-in service's store and tokens. State is saved after completed mutating requests, at most
+ * once per SAVE_INTERVAL_MS and never before their responses, and when the service starts and closes; saves never
+ * overlap, and requests completed during a save are covered by one more save.
  */
 export function builtinPersistence(
   persistence: PersistenceAdapter | string,
@@ -79,6 +82,7 @@ export function builtinPersistence(
     saving = (async () => {
       try {
         do {
+          await new Promise((resolve) => setTimeout(resolve, SAVE_INTERVAL_MS));
           again = false;
           await adapter.save(snapshot());
         } while (again);
@@ -87,6 +91,11 @@ export function builtinPersistence(
       }
     })();
     return saving;
+  }
+
+  async function flush(): Promise<void> {
+    await saving?.catch(() => undefined);
+    await adapter.save(snapshot());
   }
 
   return {
@@ -101,8 +110,8 @@ export function builtinPersistence(
     },
     /** Starts saving, first writing the current state, so that a seeded service is saved before its first request. */
     async enable(): Promise<void> {
+      await adapter.save(snapshot());
       enabled = true;
-      await save();
     },
     fetch(handler: (request: Request) => Response | Promise<Response>) {
       return async (request: Request): Promise<Response> => {
@@ -115,9 +124,8 @@ export function builtinPersistence(
     /** Waits for pending saves and writes the final state. Call before the store is reset. */
     async close(): Promise<void> {
       if (!enabled) return;
-      await saving?.catch(() => undefined);
-      await save();
       enabled = false;
+      await flush();
     },
   };
 }

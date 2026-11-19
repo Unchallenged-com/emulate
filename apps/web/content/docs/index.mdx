@@ -111,7 +111,7 @@ npx emulate list
   </tbody>
 </table>
 
-A built-in service saves its state with `--persistence <file>` (one selected service) or `services.<name>.persistence` in a project config. State is saved when the service starts listening, after each completed `POST`, `PUT`, `PATCH`, or `DELETE` request, and on shutdown, in an owner-only file replaced atomically. The next start restores the saved store and issued tokens instead of applying the seed, so seed changes apply only to a new file; `--watch` reloads reset to the seed. Persistence cannot be combined with generated secrets.
+A built-in service saves its state with `--persistence <file>` (one selected service) or `services.<name>.persistence` in a project config. State is saved when the service starts listening, at most once a second after completed `POST`, `PUT`, `PATCH`, or `DELETE` requests (never before their responses), and on shutdown, in an owner-only file replaced atomically. The next start restores the saved store and issued tokens instead of applying the seed, so seed changes apply only to a new file; `--watch` reloads reset to the seed. Persistence cannot be combined with generated secrets.
 
 The generated-secrets destination must not exist. emulate removes inherited ACLs, verifies effective owner-only access, and publishes the complete file before startup. Handled startup failures remove the invocation-owned artifact. A hard termination can leave a complete artifact that requires manual recovery. Linux requires `setfacl` and `getfacl` from the `acl` package. The flag fails closed when access controls cannot be verified and is not supported on Windows.
 
