@@ -234,4 +234,40 @@ describe("built-in service persistence", () => {
       "--persistence saves one service's state",
     );
   });
+  it("saves a burst of changes once, after the responses, and everything on close", async () => {
+    const dir = await project();
+    const port = await freePort();
+    const config = join(dir, "emulate.config.mjs");
+    const seed = { strict_scopes: true, users: [{ email: "ada@example.com" }], oauth_clients: [CLIENT] };
+    await writeFile(
+      config,
+      `const saves = (globalThis.__builtinPersistenceSaves = []);
+export default { services: { google: { emulator: "google", port: ${port}, seed: ${JSON.stringify(seed)},
+  persistence: { load: async () => null, save: async (data) => { saves.push(data); } } } } };`,
+    );
+    const running = await run(config);
+    const saves = (globalThis as { __builtinPersistenceSaves?: string[] }).__builtinPersistenceSaves!;
+    // The state saved once listening.
+    expect(saves).toHaveLength(1);
+    try {
+      const base = `http://127.0.0.1:${port}`;
+      const token = await signIn(base, "ada@example.com");
+      for (let i = 0; i < 10; i++) {
+        const raw = Buffer.from(`To: ada@example.com\r\nSubject: burst ${i}\r\n\r\nBody`).toString("base64url");
+        const sent = await fetch(`${base}/gmail/v1/users/me/messages/send`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token.access_token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ raw }),
+        });
+        expect(sent.status).toBe(200);
+      }
+      // Eleven changes answered: at most one save started meanwhile, at the interval.
+      expect(saves.length).toBeLessThanOrEqual(2);
+    } finally {
+      await running.close();
+    }
+    // The close writes the last change.
+    expect(JSON.parse(saves.at(-1)!).store.collections["google.messages"].items.length).toBeGreaterThanOrEqual(10);
+    expect(saves.length).toBeLessThanOrEqual(3);
+  });
 });
