@@ -16,6 +16,7 @@ import {
   parseGoogleBody,
   requireGoogleAuth,
 } from "../route-helpers.js";
+import { param, recordDriveEvent } from "../reports.js";
 import { getGoogleStore } from "../store.js";
 
 export function driveRoutes({ app, store }: RouteContext): void {
@@ -47,6 +48,7 @@ export function driveRoutes({ app, store }: RouteContext): void {
       size: media ? media.body.length : null,
       data: media ? media.body.toString("base64url") : null,
     });
+    recordDriveEvent(c, store, item, c.req.path.startsWith("/upload/") ? "upload" : "create");
     return c.json(formatDriveItemResource(item));
   };
 
@@ -83,6 +85,8 @@ export function driveRoutes({ app, store }: RouteContext): void {
 
     const url = new URL(c.req.url);
     if (url.searchParams.get("alt") === "media") {
+      // "An application accessed item content on a user's behalf", with "the API method used to generate the event".
+      recordDriveEvent(c, store, item, "access_item_content", param("api_method", "drive.files.get"));
       return new Response(item.data ? Buffer.from(item.data, "base64url") : Buffer.alloc(0), {
         status: 200,
         headers: {
@@ -120,6 +124,19 @@ export function driveRoutes({ app, store }: RouteContext): void {
       removeParents,
       name: getString(requestBody, "name"),
     });
+    if (updated.name !== item.name) {
+      recordDriveEvent(c, store, updated, "rename", param("new_value", updated.name), param("old_value", item.name));
+    }
+    const left = item.parent_google_ids.filter((id) => !updated.parent_google_ids.includes(id));
+    const joined = updated.parent_google_ids.filter((id) => !item.parent_google_ids.includes(id));
+    if (left.length > 0 || joined.length > 0) {
+      const folder = (prefix: string, ids: string[]) =>
+        ids.flatMap((id) => {
+          const title = getDriveItemById(gs, authEmail, id)?.name;
+          return [param(`${prefix}_folder_id`, id), ...(title ? [param(`${prefix}_folder_title`, title)] : [])];
+        });
+      recordDriveEvent(c, store, updated, "move", ...folder("destination", joined), ...folder("source", left));
+    }
 
     return c.json(formatDriveItemResource(updated));
   };

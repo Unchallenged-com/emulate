@@ -52,7 +52,7 @@ export interface GoogleActivityEvent {
 
 /** An audit record the Reports API serves (`activities.list`). */
 export interface GoogleActivity extends Entity {
-  application_name: "admin" | "login" | "token";
+  application_name: "admin" | "drive" | "login" | "token";
   time: string;
   unique_qualifier: string;
   actor_email: string;

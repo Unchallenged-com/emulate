@@ -1,7 +1,13 @@
 import { randomBytes } from "node:crypto";
 import { clientAddress, type Context, type Store } from "@emulators/core";
 import { etagOf, findUserByKey, getCustomerId } from "./directory.js";
-import type { GoogleActivity, GoogleActivityEvent, GoogleActivityParameter, GoogleUser } from "./entities.js";
+import type {
+  GoogleActivity,
+  GoogleActivityEvent,
+  GoogleActivityParameter,
+  GoogleDriveItem,
+  GoogleUser,
+} from "./entities.js";
 import { getAuthenticatedEmail } from "./helpers.js";
 import { tokenGrant } from "./oauth-tokens.js";
 import { getGoogleStore } from "./store.js";
@@ -13,6 +19,7 @@ import { getGoogleStore } from "./store.js";
 // - admin: https://developers.google.com/workspace/admin/reports/v1/appendix/activity/admin-user-settings and
 //   https://developers.google.com/workspace/admin/reports/v1/appendix/activity/admin-group-settings
 // - token: https://developers.google.com/workspace/admin/reports/v1/appendix/activity/token
+// - drive: https://developers.google.com/workspace/admin/reports/v1/appendix/activity/drive
 
 export type ReportsApplication = GoogleActivity["application_name"];
 
@@ -140,6 +147,74 @@ export function recordAdminActivity(c: Context, store: Store, events: GoogleActi
   const admin = email ? findUserByKey(getGoogleStore(store), email) : undefined;
   if (!inAccount(admin) || events.length === 0) return;
   record(c, store, "admin", admin, events, requestClientId(c, store));
+}
+
+// `doc_type` by MIME type, among the values the Drive events reference allows; any other type is `unknown`.
+const DOC_TYPES: Record<string, string> = {
+  "application/vnd.google-apps.document": "document",
+  "application/vnd.google-apps.drawing": "drawing",
+  "application/vnd.google-apps.folder": "folder",
+  "application/vnd.google-apps.form": "form",
+  "application/vnd.google-apps.jam": "jam",
+  "application/vnd.google-apps.presentation": "presentation",
+  "application/vnd.google-apps.script": "script",
+  "application/vnd.google-apps.shortcut": "shortcut",
+  "application/vnd.google-apps.site": "sites",
+  "application/vnd.google-apps.spreadsheet": "spreadsheet",
+  "application/msword": "msword",
+  "application/pdf": "pdf",
+  "application/vnd.ms-excel": "msexcel",
+  "application/vnd.ms-powerpoint": "mspowerpoint",
+  "image/jpeg": "jpeg",
+  "image/png": "png",
+  "text/html": "html",
+  "text/plain": "txt",
+  "video/mp4": "mp4",
+  "video/mpeg": "mpeg",
+  "video/quicktime": "quicktime",
+};
+
+/**
+ * A Drive event (type `access`) of the calling user on an item. The parameters and their order are those of recorded
+ * activities (third-party parser test records of 2023 to 2025), values from the Drive events reference: the emulator
+ * has no sharing, so every item is `private` and owned by its user. `originating_app_id`, "the Google Cloud project
+ * number of the app", is left out: the emulator's clients have none. Event-specific parameters follow `visibility`.
+ */
+export function recordDriveEvent(
+  c: Context,
+  store: Store,
+  item: GoogleDriveItem,
+  name: "create" | "upload" | "access_item_content" | "rename" | "move",
+  ...specific: GoogleActivityParameter[]
+): void {
+  const email = getAuthenticatedEmail(c);
+  const actor = email ? getGoogleStore(store).users.findOneBy("email", email) : undefined;
+  if (!inAccount(actor)) return;
+  record(c, store, "drive", actor, [
+    {
+      type: "access",
+      name,
+      parameters: [
+        { name: "primary_event", boolValue: true },
+        { name: "billable", boolValue: true },
+        { name: "owner_is_shared_drive", boolValue: false },
+        param("owner", item.user_email),
+        param("doc_id", item.google_id),
+        param(
+          "doc_type",
+          item.mime_type.startsWith("video/")
+            ? (DOC_TYPES[item.mime_type] ?? "video")
+            : (DOC_TYPES[item.mime_type] ?? "unknown"),
+        ),
+        { name: "is_encrypted", boolValue: false },
+        param("doc_title", item.name),
+        param("visibility", "private"),
+        ...specific,
+        { name: "actor_is_collaborator_account", boolValue: false },
+        { name: "owner_is_team_drive", boolValue: false },
+      ],
+    },
+  ]);
 }
 
 /** An activity as the Reports API returns it. */
