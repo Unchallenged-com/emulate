@@ -24,6 +24,7 @@ import { settingsRoutes } from "./routes/settings.js";
 import { threadRoutes } from "./routes/threads.js";
 import { getGoogleStore } from "./store.js";
 import { googleAuthMiddleware } from "./auth.js";
+import { withTokenActivity } from "./reports.js";
 
 export { getGoogleStore, type GoogleStore } from "./store.js";
 export * from "./entities.js";
@@ -513,8 +514,8 @@ function seedDriveItems(store: Store, items: GoogleSeedDriveItem[], fallbackEmai
 export const googlePlugin: ServicePlugin = {
   name: "google",
   register(app: Hono<AppEnv>, store: Store, webhooks: WebhookDispatcher, baseUrl: string, tokenMap?: TokenMap): void {
-    const ctx: RouteContext = { app, store, webhooks, baseUrl, tokenMap };
     app.use("*", googleAuthMiddleware(app, store));
+    const ctx: RouteContext = { app: withTokenActivity(app, store), store, webhooks, baseUrl, tokenMap };
     oauthRoutes(ctx);
     adminDirectoryRoutes(ctx);
     reportsRoutes(ctx);

@@ -177,7 +177,7 @@ describe("Google Admin SDK Reports API", () => {
     expect(login.actor).toEqual({ email: admin, profileId });
     expect(login).not.toHaveProperty("ownerDomain");
 
-    const grants = await report(auth, "token");
+    const grants = await report(auth, "token", "?eventName=authorize");
     expect(grants.items).toHaveLength(1);
     expect(grants.items![0]).toMatchObject({
       id: { applicationName: "token" },

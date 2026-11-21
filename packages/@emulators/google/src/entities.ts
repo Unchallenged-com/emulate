@@ -42,7 +42,8 @@ export interface GoogleGroupMember extends Entity {
 export type GoogleActivityParameter =
   | { name: string; value: string }
   | { name: string; multiValue: string[] }
-  | { name: string; boolValue: boolean };
+  | { name: string; boolValue: boolean }
+  | { name: string; intValue: string };
 
 export interface GoogleActivityEvent {
   type: string;

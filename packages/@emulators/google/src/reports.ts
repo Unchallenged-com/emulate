@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { clientAddress, type Context, type Store } from "@emulators/core";
+import { clientAddress, type AppEnv, type Context, type Handler, type Hono, type Store } from "@emulators/core";
 import { etagOf, findUserByKey, getCustomerId } from "./directory.js";
 import type { GoogleActivity, GoogleActivityEvent, GoogleActivityParameter, GoogleUser } from "./entities.js";
 import { getAuthenticatedEmail } from "./helpers.js";
@@ -109,6 +109,156 @@ export function recordTokenEvent(
       ],
     },
   ]);
+}
+
+// The API methods the emulator serves, by route, with their IDs in Google's discovery documents. A recorded `activity`
+// event names its method that way (`reports.activities.list`, of the API named `admin`).
+const API_METHODS: Record<string, string> = {
+  "GET /admin/directory/v1/users": "directory.users.list",
+  "GET /admin/directory/v1/users/:userKey": "directory.users.get",
+  "POST /admin/directory/v1/users": "directory.users.insert",
+  "PUT /admin/directory/v1/users/:userKey": "directory.users.update",
+  "PATCH /admin/directory/v1/users/:userKey": "directory.users.patch",
+  "DELETE /admin/directory/v1/users/:userKey": "directory.users.delete",
+  "POST /admin/directory/v1/users/:userKey/makeAdmin": "directory.users.makeAdmin",
+  "POST /admin/directory/v1/users/:userKey/signOut": "directory.users.signOut",
+  "GET /admin/directory/v1/users/:userKey/tokens": "directory.tokens.list",
+  "GET /admin/directory/v1/users/:userKey/tokens/:clientId": "directory.tokens.get",
+  "DELETE /admin/directory/v1/users/:userKey/tokens/:clientId": "directory.tokens.delete",
+  "GET /admin/directory/v1/groups": "directory.groups.list",
+  "GET /admin/directory/v1/groups/:groupKey": "directory.groups.get",
+  "POST /admin/directory/v1/groups": "directory.groups.insert",
+  "PUT /admin/directory/v1/groups/:groupKey": "directory.groups.update",
+  "PATCH /admin/directory/v1/groups/:groupKey": "directory.groups.patch",
+  "DELETE /admin/directory/v1/groups/:groupKey": "directory.groups.delete",
+  "GET /admin/directory/v1/groups/:groupKey/members": "directory.members.list",
+  "GET /admin/directory/v1/groups/:groupKey/members/:memberKey": "directory.members.get",
+  "GET /admin/directory/v1/groups/:groupKey/hasMember/:memberKey": "directory.members.hasMember",
+  "POST /admin/directory/v1/groups/:groupKey/members": "directory.members.insert",
+  "PUT /admin/directory/v1/groups/:groupKey/members/:memberKey": "directory.members.update",
+  "PATCH /admin/directory/v1/groups/:groupKey/members/:memberKey": "directory.members.patch",
+  "DELETE /admin/directory/v1/groups/:groupKey/members/:memberKey": "directory.members.delete",
+  "GET /admin/reports/v1/activity/users/:userKey/applications/:applicationName": "reports.activities.list",
+  "GET /calendar/v3/users/:userId/calendarList": "calendar.calendarList.list",
+  "GET /calendar/v3/calendars/:calendarId/events": "calendar.events.list",
+  "POST /calendar/v3/calendars/:calendarId/events": "calendar.events.insert",
+  "DELETE /calendar/v3/calendars/:calendarId/events/:eventId": "calendar.events.delete",
+  "POST /calendar/v3/freeBusy": "calendar.freebusy.query",
+  "GET /drive/v3/files": "drive.files.list",
+  "POST /drive/v3/files": "drive.files.create",
+  "POST /upload/drive/v3/files": "drive.files.create",
+  "GET /drive/v3/files/:fileId": "drive.files.get",
+  "PATCH /drive/v3/files/:fileId": "drive.files.update",
+  "GET /gmail/v1/users/:userId/drafts": "gmail.users.drafts.list",
+  "POST /gmail/v1/users/:userId/drafts": "gmail.users.drafts.create",
+  "POST /upload/gmail/v1/users/:userId/drafts": "gmail.users.drafts.create",
+  "GET /gmail/v1/users/:userId/drafts/:id": "gmail.users.drafts.get",
+  "PUT /gmail/v1/users/:userId/drafts/:id": "gmail.users.drafts.update",
+  "POST /gmail/v1/users/:userId/drafts/send": "gmail.users.drafts.send",
+  "POST /upload/gmail/v1/users/:userId/drafts/send": "gmail.users.drafts.send",
+  "DELETE /gmail/v1/users/:userId/drafts/:id": "gmail.users.drafts.delete",
+  "GET /gmail/v1/users/:userId/history": "gmail.users.history.list",
+  "POST /gmail/v1/users/:userId/watch": "gmail.users.watch",
+  "POST /gmail/v1/users/:userId/stop": "gmail.users.stop",
+  "GET /gmail/v1/users/:userId/labels": "gmail.users.labels.list",
+  "GET /gmail/v1/users/:userId/labels/:id": "gmail.users.labels.get",
+  "POST /gmail/v1/users/:userId/labels": "gmail.users.labels.create",
+  "PUT /gmail/v1/users/:userId/labels/:id": "gmail.users.labels.update",
+  "PATCH /gmail/v1/users/:userId/labels/:id": "gmail.users.labels.patch",
+  "DELETE /gmail/v1/users/:userId/labels/:id": "gmail.users.labels.delete",
+  "GET /gmail/v1/users/:userId/messages": "gmail.users.messages.list",
+  "POST /gmail/v1/users/:userId/messages/batchModify": "gmail.users.messages.batchModify",
+  "POST /gmail/v1/users/:userId/messages/batchDelete": "gmail.users.messages.batchDelete",
+  "POST /gmail/v1/users/:userId/messages/import": "gmail.users.messages.import",
+  "POST /upload/gmail/v1/users/:userId/messages/import": "gmail.users.messages.import",
+  "POST /gmail/v1/users/:userId/messages/send": "gmail.users.messages.send",
+  "POST /upload/gmail/v1/users/:userId/messages/send": "gmail.users.messages.send",
+  "POST /gmail/v1/users/:userId/messages": "gmail.users.messages.insert",
+  "POST /upload/gmail/v1/users/:userId/messages": "gmail.users.messages.insert",
+  "GET /gmail/v1/users/:userId/messages/:messageId/attachments/:id": "gmail.users.messages.attachments.get",
+  "GET /gmail/v1/users/:userId/messages/:id": "gmail.users.messages.get",
+  "POST /gmail/v1/users/:userId/messages/:id/modify": "gmail.users.messages.modify",
+  "POST /gmail/v1/users/:userId/messages/:id/trash": "gmail.users.messages.trash",
+  "POST /gmail/v1/users/:userId/messages/:id/untrash": "gmail.users.messages.untrash",
+  "DELETE /gmail/v1/users/:userId/messages/:id": "gmail.users.messages.delete",
+  "GET /gmail/v1/users/:userId/settings/filters": "gmail.users.settings.filters.list",
+  "POST /gmail/v1/users/:userId/settings/filters": "gmail.users.settings.filters.create",
+  "DELETE /gmail/v1/users/:userId/settings/filters/:id": "gmail.users.settings.filters.delete",
+  "GET /gmail/v1/users/:userId/settings/forwardingAddresses": "gmail.users.settings.forwardingAddresses.list",
+  "GET /gmail/v1/users/:userId/settings/sendAs": "gmail.users.settings.sendAs.list",
+  "GET /gmail/v1/users/:userId/threads": "gmail.users.threads.list",
+  "GET /gmail/v1/users/:userId/threads/:id": "gmail.users.threads.get",
+  "POST /gmail/v1/users/:userId/threads/:id/modify": "gmail.users.threads.modify",
+  "POST /gmail/v1/users/:userId/threads/:id/trash": "gmail.users.threads.trash",
+  "POST /gmail/v1/users/:userId/threads/:id/untrash": "gmail.users.threads.untrash",
+  "DELETE /gmail/v1/users/:userId/threads/:id": "gmail.users.threads.delete",
+};
+
+// Each API by its discovery document's `name` (the Directory and Reports APIs are both `admin`), with its
+// `product_bucket`, a value of the token events reference.
+const API_PRODUCTS: Record<string, [api: string, product: string]> = {
+  directory: ["admin", "GSUITE_ADMIN"],
+  reports: ["admin", "GSUITE_ADMIN"],
+  calendar: ["calendar", "CALENDAR"],
+  drive: ["drive", "DRIVE"],
+  gmail: ["gmail", "GMAIL"],
+};
+
+/**
+ * An API call an application made with a user's token, as the OAuth Token application's `activity` event ("Access
+ * activity for an application"), in the order of recorded activities. Only the calls the API answered, made with a
+ * token the emulator issued from a grant, are recorded.
+ */
+function recordTokenActivity(c: Context, store: Store, methodId: string, responseBytes: number): void {
+  const token = c.req.header("Authorization")?.match(/^Bearer\s+(\S+)\s*$/i)?.[1];
+  const grant = token ? tokenGrant(store, token) : undefined;
+  if (!grant) return;
+  const gs = getGoogleStore(store);
+  const user = gs.users.findOneBy("email", grant.email);
+  if (!inAccount(user)) return;
+  const client = gs.oauthClients.findOneBy("client_id", grant.clientId);
+  const [api, product] = API_PRODUCTS[methodId.split(".")[0]];
+  record(c, store, "token", user, [
+    {
+      type: "auth",
+      name: "activity",
+      parameters: [
+        param("api_name", api),
+        param("method_name", methodId),
+        param("client_id", grant.clientId),
+        { name: "num_response_bytes", intValue: String(responseBytes) },
+        param("product_bucket", product),
+        param("app_name", client?.name ?? grant.clientId),
+        param("client_type", clientType(client?.redirect_uris ?? [])),
+      ],
+    },
+  ]);
+}
+
+/**
+ * The app the service's routes register on, recording each API call answered with success as a token `activity`
+ * event. The routes it serves keep their handlers; only those of the methods above are wrapped.
+ */
+export function withTokenActivity(app: Hono<AppEnv>, store: Store): Hono<AppEnv> {
+  const audited = Object.create(app) as Hono<AppEnv>;
+  audited.on = (method: string, path: string, ...handlers: Handler<AppEnv>[]) => {
+    const methodId = API_METHODS[`${method.toUpperCase()} ${path}`];
+    const handler = handlers.pop();
+    if (!methodId || !handler) {
+      app.on(method, path, ...handlers, ...(handler ? [handler] : []));
+      return audited;
+    }
+    const recorded: Handler<AppEnv> = async (c, next) => {
+      const response = await handler(c, next);
+      if (response instanceof Response && response.ok) {
+        recordTokenActivity(c, store, methodId, (await response.clone().arrayBuffer()).byteLength);
+      }
+      return response;
+    };
+    app.on(method, path, ...handlers, recorded);
+    return audited;
+  };
+  return audited;
 }
 
 /** The OAuth client of the access token a request carries, if the emulator issued it from a grant. */
