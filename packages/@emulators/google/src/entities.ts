@@ -59,6 +59,8 @@ export interface GoogleActivity extends Entity {
   actor_profile_id: string;
   actor_oauth_client_id: string | null;
   actor_application_name: string | null;
+  /** The actor's application acted as the user, through domain-wide delegation. */
+  actor_impersonation?: boolean;
   ip_address: string | null;
   events: GoogleActivityEvent[];
 }

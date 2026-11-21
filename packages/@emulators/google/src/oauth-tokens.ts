@@ -7,6 +7,8 @@ interface AccessTokenRecord {
   scopes: string[];
   expiresAt: number;
   refreshToken: string;
+  /** The client ID of the service account that obtained the token as the user, through domain-wide delegation. */
+  delegatedBy?: string;
 }
 
 interface RefreshTokenRecord {

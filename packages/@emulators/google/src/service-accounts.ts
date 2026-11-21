@@ -131,6 +131,7 @@ export async function jwtBearerGrant(c: Context, store: Store, tokenMap: TokenMa
     scopes,
     expiresAt: Date.now() + TOKEN_LIFETIME_S * 1000,
     refreshToken: `jwt-bearer:${token}`,
+    ...(email !== account.client_email ? { delegatedBy: account.client_id } : {}),
   });
   tokenMap?.set(token, { login: email, id: 0, scopes });
 

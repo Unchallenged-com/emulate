@@ -3,7 +3,7 @@ import { clientAddress, type Context, type Store } from "@emulators/core";
 import { etagOf, findUserByKey, getCustomerId } from "./directory.js";
 import type { GoogleActivity, GoogleActivityEvent, GoogleActivityParameter, GoogleUser } from "./entities.js";
 import { getAuthenticatedEmail } from "./helpers.js";
-import { tokenGrant } from "./oauth-tokens.js";
+import { getAccessTokens, tokenGrant } from "./oauth-tokens.js";
 import { getGoogleStore } from "./store.js";
 
 // The audit records behind the Admin SDK Reports API's activities.list
@@ -30,6 +30,7 @@ function record(
   actor: GoogleUser,
   events: GoogleActivityEvent[],
   oauthClientId: string | null = null,
+  impersonation = false,
 ): void {
   const gs = getGoogleStore(store);
   const client = oauthClientId ? gs.oauthClients.findOneBy("client_id", oauthClientId) : undefined;
@@ -42,6 +43,7 @@ function record(
     actor_profile_id: actor.uid,
     actor_oauth_client_id: oauthClientId,
     actor_application_name: oauthClientId ? (client?.name ?? null) : null,
+    ...(impersonation ? { actor_impersonation: true } : {}),
     ip_address: clientAddress(c.req.raw) ?? null,
     events,
   });
@@ -111,10 +113,15 @@ export function recordTokenEvent(
   ]);
 }
 
-/** The OAuth client of the access token a request carries, if the emulator issued it from a grant. */
-function requestClientId(c: Context, store: Store): string | null {
+/**
+ * The application of the access token a request carries: the OAuth client of the user's grant, or the service account
+ * that obtained the token as the user through domain-wide delegation, which impersonates them.
+ */
+function requestApplication(c: Context, store: Store): { clientId: string | null; impersonation: boolean } {
   const token = c.get("authToken");
-  return (token && tokenGrant(store, token)?.clientId) || null;
+  const delegatedBy = token ? getAccessTokens(store).get(token)?.delegatedBy : undefined;
+  if (delegatedBy) return { clientId: delegatedBy, impersonation: true };
+  return { clientId: (token && tokenGrant(store, token)?.clientId) || null, impersonation: false };
 }
 
 export const userEvent = (name: string, ...parameters: GoogleActivityParameter[]): GoogleActivityEvent => ({
@@ -139,7 +146,8 @@ export function recordAdminActivity(c: Context, store: Store, events: GoogleActi
   const email = getAuthenticatedEmail(c);
   const admin = email ? findUserByKey(getGoogleStore(store), email) : undefined;
   if (!inAccount(admin) || events.length === 0) return;
-  record(c, store, "admin", admin, events, requestClientId(c, store));
+  const application = requestApplication(c, store);
+  record(c, store, "admin", admin, events, application.clientId, application.impersonation);
 }
 
 /** An activity as the Reports API returns it. */
@@ -163,6 +171,10 @@ export function activityResource(store: Store, activity: GoogleActivity): Record
             applicationInfo: {
               oauthClientId: activity.actor_oauth_client_id,
               ...(activity.actor_application_name ? { applicationName: activity.actor_application_name } : {}),
+              // "Whether the application was impersonating a user" (the Reports discovery document); recorded
+              // activities of an impersonating application carry it as `true` with the application's numeric client
+              // ID (a third-party parser's test record of 2025). No source names a service account's application.
+              ...(activity.actor_impersonation ? { impersonation: true } : {}),
             },
           }
         : {}),
