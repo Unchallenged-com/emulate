@@ -81,6 +81,7 @@ const RFC3339 = /^(\d\d\d\d)-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)(?:\.(\d+))?(?:(Z
 // "If the `endTime` is not specified, the report returns all activities from the `startTime` until the current time
 // or the most recent 180 days if the `startTime` is more than 180 days in the past."
 const RETENTION_MS = 180 * 24 * 60 * 60 * 1000;
+const GMAIL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
 type Condition = { name: string; operator: string; value: string };
 
@@ -183,6 +184,12 @@ export function reportsRoutes({ app, store, baseUrl }: RouteContext): void {
     const end = endParam !== undefined ? Date.parse(endParam) : now;
     const start = startParam !== undefined ? Date.parse(startParam) : Math.max(0, end - RETENTION_MS);
     if (startParam !== undefined && (start > now || start > end)) return invalid(c, "Invalid Input: startTime");
+    // "For Gmail requests, `startTime` and `endTime` must be provided and the difference must not be greater than 30
+    // days." Google does not document the error; the emulator answers as for any other invalid bound.
+    if (application === "gmail") {
+      if (startParam === undefined) return invalid(c, "Invalid Input: startTime");
+      if (endParam === undefined || end - start > GMAIL_WINDOW_MS) return invalid(c, "Invalid Input: endTime");
+    }
 
     const requested = Number.parseInt(c.req.query("maxResults") ?? "", 10);
     const size = Number.isFinite(requested) && requested > 0 ? Math.min(requested, 1000) : 1000;
