@@ -23,10 +23,16 @@ import { setCustomerId } from "./directory.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { threadRoutes } from "./routes/threads.js";
 import { getGoogleStore } from "./store.js";
+import {
+  seedServiceAccounts,
+  type GoogleDomainWideDelegationSeed,
+  type GoogleServiceAccountSeed,
+} from "./service-accounts.js";
 import { googleAuthMiddleware } from "./auth.js";
 
 export { getGoogleStore, type GoogleStore } from "./store.js";
 export * from "./entities.js";
+export type { GoogleDomainWideDelegationSeed, GoogleServiceAccountSeed } from "./service-accounts.js";
 
 export interface GoogleSeedUser {
   email: string;
@@ -126,6 +132,10 @@ export interface GoogleSeedConfig {
   strict_scopes?: boolean;
   /** The Directory API's `customerId` of the account; generated when not set. */
   customer_id?: string;
+  /** Service accounts that obtain tokens with the JWT bearer grant. */
+  service_accounts?: GoogleServiceAccountSeed[];
+  /** Domain-wide delegation: the client IDs of service accounts allowed to act as the domain's users, with their scopes. */
+  domain_wide_delegation?: GoogleDomainWideDelegationSeed[];
   users?: GoogleSeedUser[];
   oauth_clients?: Array<{
     client_id: string;
@@ -311,6 +321,7 @@ export function seedFromConfig(store: Store, _baseUrl: string, config: GoogleSee
   if (config.customer_id) {
     setCustomerId(store, config.customer_id);
   }
+  seedServiceAccounts(store, config.service_accounts, config.domain_wide_delegation);
 
   if (config.users) {
     for (const user of config.users) {
