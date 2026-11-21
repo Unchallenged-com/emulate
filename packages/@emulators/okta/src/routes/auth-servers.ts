@@ -1,5 +1,12 @@
-import { parsePagination, setLinkHeader, type RouteContext } from "@emulators/core";
-import { DEFAULT_AUDIENCE, generateOktaId, normalizeAuthServerStatus } from "../helpers.js";
+import {
+  parsePagination,
+  setLinkHeader,
+  type AppEnv,
+  type Context,
+  type RouteContext,
+  type Store,
+} from "@emulators/core";
+import { DEFAULT_AUDIENCE, DEFAULT_AUTH_SERVER_ID, generateOktaId, normalizeAuthServerStatus } from "../helpers.js";
 import {
   authorizationServerResponse,
   findAuthorizationServerByRef,
@@ -8,6 +15,8 @@ import {
   requireManagementAuth,
 } from "../route-helpers.js";
 import { getOktaStore } from "../store.js";
+import { authorizationServerTarget, recordManagementEvent, type LogEventType } from "../system-log.js";
+import type { OktaAuthorizationServer } from "../entities.js";
 
 function normalizeServerId(name: string): string {
   const compact = name
@@ -16,6 +25,18 @@ function normalizeServerId(name: string): string {
     .replace(/[^a-z0-9_-]+/g, "-");
   if (compact.length > 0) return compact;
   return generateOktaId("as");
+}
+
+function recordServerEvent(
+  store: Store,
+  c: Context<AppEnv>,
+  auth: { login: string },
+  eventType: LogEventType,
+  server: OktaAuthorizationServer,
+): void {
+  recordManagementEvent(store, c, auth, eventType, [authorizationServerTarget(server)], {
+    defaultAuthorizationServer: String(server.server_id === DEFAULT_AUTH_SERVER_ID),
+  });
 }
 
 export function authorizationServerRoutes({ app, store, baseUrl, tokenMap }: RouteContext): void {
@@ -61,6 +82,7 @@ export function authorizationServerRoutes({ app, store, baseUrl, tokenMap }: Rou
       status: normalizeAuthServerStatus(typeof body.status === "string" ? body.status : undefined, "ACTIVE"),
     });
 
+    recordServerEvent(store, c, auth, "oauth2.as.created", created);
     return c.json(authorizationServerResponse(baseUrl, created), 201);
   });
 
@@ -70,8 +92,9 @@ export function authorizationServerRoutes({ app, store, baseUrl, tokenMap }: Rou
 
     const server = findAuthorizationServerByRef(oktaStore, c.req.param("authServerId"));
     if (!server) return oktaError(c, 404, "E0000007", "Not found: authorization server");
-    const updated = oktaStore.authorizationServers.update(server.id, { status: "ACTIVE" });
-    return c.json(authorizationServerResponse(baseUrl, updated ?? server));
+    const updated = oktaStore.authorizationServers.update(server.id, { status: "ACTIVE" }) ?? server;
+    recordServerEvent(store, c, auth, "oauth2.as.activated", updated);
+    return c.json(authorizationServerResponse(baseUrl, updated));
   });
 
   app.post("/api/v1/authorizationServers/:authServerId/lifecycle/deactivate", (c) => {
@@ -80,8 +103,9 @@ export function authorizationServerRoutes({ app, store, baseUrl, tokenMap }: Rou
 
     const server = findAuthorizationServerByRef(oktaStore, c.req.param("authServerId"));
     if (!server) return oktaError(c, 404, "E0000007", "Not found: authorization server");
-    const updated = oktaStore.authorizationServers.update(server.id, { status: "INACTIVE" });
-    return c.json(authorizationServerResponse(baseUrl, updated ?? server));
+    const updated = oktaStore.authorizationServers.update(server.id, { status: "INACTIVE" }) ?? server;
+    recordServerEvent(store, c, auth, "oauth2.as.deactivated", updated);
+    return c.json(authorizationServerResponse(baseUrl, updated));
   });
 
   app.get("/api/v1/authorizationServers/:authServerId", (c) => {
@@ -111,6 +135,7 @@ export function authorizationServerRoutes({ app, store, baseUrl, tokenMap }: Rou
       audiences: audiences.length > 0 ? audiences : server.audiences,
       status: normalizeAuthServerStatus(typeof body.status === "string" ? body.status : undefined, server.status),
     });
+    recordServerEvent(store, c, auth, "oauth2.as.updated", updated ?? server);
     return c.json(authorizationServerResponse(baseUrl, updated ?? server));
   });
 
@@ -125,6 +150,7 @@ export function authorizationServerRoutes({ app, store, baseUrl, tokenMap }: Rou
       oktaStore.oauthClients.delete(client.id);
     }
     oktaStore.authorizationServers.delete(server.id);
+    recordServerEvent(store, c, auth, "oauth2.as.deleted", server);
     return new Response(null, { status: 204 });
   });
 }

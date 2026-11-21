@@ -76,11 +76,12 @@ Default org server and custom authorization server paths (`/oauth2/:authServerId
 
 The emulator records what users, administrators and clients do as Okta's System Log events (LogEvent records, with Okta's event types, actor, client address, targets, outcome and transaction):
 
-- Sign-ins: `user.session.start` at the sign-in page, and `user.authentication.sso` when a user signs in to an app linked to the OIDC client (its `credentials.oauthClient.client_id`).
-- Tokens: `app.oauth2.token.grant.access_token` (org server) and `app.oauth2.as.token.grant.access_token` (custom servers) for client credentials grants.
+- Sign-ins: `user.session.start` at the sign-in page, `user.authentication.sso` when a user signs in to an app linked to the OIDC client (its `credentials.oauthClient.client_id`), `app.generic.unauth_app_access_attempt` when that app refuses an unassigned user, and `user.session.end` at logout with an `id_token_hint` the emulator issued.
+- OAuth, as `app.oauth2.*` for the org server and `app.oauth2.as.*` for custom servers: `authorize.code`, `token.grant.access_token`, `token.grant.id_token` and `token.grant.refresh_token` for each token a grant issues, and `token.revoke` when a known token is revoked.
 - Users: `user.lifecycle.create`, `activate`, `deactivate`, `suspend`, `unsuspend`, `reactivate`, `delete.initiated` and `delete.completed`, `user.account.update_profile`, and `user.session.clear` when the user's sessions are revoked.
 - Groups: `group.lifecycle.create` and `delete`, `group.profile.update`, `group.user_membership.add` and `remove`.
 - Apps: `application.lifecycle.create`, `update`, `activate`, `deactivate` and `delete`, `application.user_membership.add` and `remove`.
+- Authorization servers: `oauth2.as.created`, `updated`, `activated`, `deactivated` and `deleted`.
 
 A management call is recorded with the token's user as the actor and the API token's id in `transaction.detail.requestApiTokenId`; a call made with a client credentials access token has the service app as the actor. Geolocation and network fields (`geographicalContext`, `securityContext`) are null.
 

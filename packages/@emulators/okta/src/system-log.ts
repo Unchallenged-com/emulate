@@ -60,12 +60,60 @@ export interface LogEvent {
 const EVENT_TYPES = {
   "user.session.start": { displayMessage: "User login to Okta", legacy: "core.user_auth.login_success" },
   "user.session.clear": { displayMessage: "Clear user session", legacy: null },
+  "user.session.end": { displayMessage: "User logout from Okta", legacy: "core.user_auth.logout_success" },
+  "app.generic.unauth_app_access_attempt": {
+    displayMessage: "User attempted unauthorized access to app",
+    legacy: "app.generic.unauth_app_access_attempt",
+  },
   "user.authentication.sso": { displayMessage: "User single sign on to app", legacy: "app.auth.sso" },
   "app.oauth2.token.grant.access_token": {
     displayMessage: "OIDC access token is granted",
     legacy: "app.oauth2.token.grant.access_token_success",
   },
-  "app.oauth2.as.token.grant.access_token": { displayMessage: "OAuth2 access token is granted", legacy: null },
+  "app.oauth2.as.token.grant.access_token": {
+    displayMessage: "OAuth2 access token is granted",
+    legacy: "app.oauth2.as.token.grant.access_token_success",
+  },
+  "app.oauth2.authorize.code": {
+    displayMessage: "OIDC authorization code request",
+    legacy: "app.oauth2.authorize.code_success",
+  },
+  "app.oauth2.as.authorize.code": {
+    displayMessage: "OAuth2 authorization code request",
+    legacy: "app.oauth2.as.authorize.code_success",
+  },
+  "app.oauth2.token.grant.id_token": {
+    displayMessage: "OIDC id token is granted",
+    legacy: "app.oauth2.token.grant.id_token_success",
+  },
+  "app.oauth2.as.token.grant.id_token": {
+    displayMessage: "OAuth 2.0 ID token is granted",
+    legacy: "app.oauth2.as.token.grant.id_token_success",
+  },
+  "app.oauth2.token.grant.refresh_token": {
+    displayMessage: "OIDC refresh token is granted",
+    legacy: "app.oauth2.token.grant.refresh_token_success",
+  },
+  "app.oauth2.as.token.grant.refresh_token": {
+    displayMessage: "OAuth2 refresh token is granted",
+    legacy: "app.oauth2.as.token.grant.refresh_token_success",
+  },
+  "app.oauth2.token.revoke": {
+    displayMessage: "OIDC token revocation request",
+    legacy: "app.oauth2.token.revoke_success",
+  },
+  "app.oauth2.as.token.revoke": {
+    displayMessage: "OAuth2 token revocation request",
+    legacy: "app.oauth2.as.token.revoke_success",
+  },
+  "oauth2.as.created": { displayMessage: "Authorization server is created.", legacy: "api.oauth2.as.created" },
+  "oauth2.as.updated": { displayMessage: "Authorization server is updated.", legacy: "api.oauth2.as.updated" },
+  "oauth2.as.activated": { displayMessage: "Authorization server is activated.", legacy: "api.oauth2.as.activated" },
+  "oauth2.as.deactivated": {
+    displayMessage: "Authorization server is deactivated.",
+    legacy: "api.oauth2.as.deactivated",
+  },
+  "oauth2.as.deleted": { displayMessage: "Authorization server is deleted.", legacy: "api.oauth2.as.deleted" },
   "user.lifecycle.create": { displayMessage: "Create okta user", legacy: null },
   "user.lifecycle.activate": { displayMessage: "Activate Okta user", legacy: null },
   "user.lifecycle.deactivate": { displayMessage: "Deactivate Okta user", legacy: null },
@@ -110,6 +158,8 @@ export interface LogEventInput {
   rootSessionId?: string;
   debugData?: Record<string, unknown>;
   transactionDetail?: Record<string, unknown>;
+  outcome?: { result: "SUCCESS" | "FAILURE"; reason?: string | null };
+  severity?: LogEvent["severity"];
 }
 
 // One id per request: the events a request writes share their transaction and request ids.
@@ -130,10 +180,10 @@ export function apiTokenId(token: string): string {
   return `00T${digest.slice(0, 17)}`;
 }
 
-/** An access token's id and hash as Okta logs them: `AT.` ids, and a 22 character hash. */
-export function accessTokenIds(token: string): { id: string; hash: string } {
+/** A token's id and hash as Okta logs them: `AT.` (access) or `ID.` (ID token) ids, and a 22 character hash. */
+export function accessTokenIds(token: string, prefix: "AT" | "ID" | "RT" = "AT"): { id: string; hash: string } {
   const digest = createHash("sha256").update(token).digest();
-  return { id: `AT.${digest.toString("base64url")}`, hash: digest.subarray(0, 16).toString("base64url") };
+  return { id: `${prefix}.${digest.toString("base64url")}`, hash: digest.subarray(0, 16).toString("base64url") };
 }
 
 /** A session id in Okta's form: `idx` for an Identity Engine sign-in, `trs` for an API call. */
@@ -199,10 +249,10 @@ export function recordLogEvent(store: Store, c: Context<AppEnv>, input: LogEvent
     authenticationContext,
     displayMessage: known.displayMessage,
     eventType: input.eventType,
-    outcome: { result: "SUCCESS", reason: null },
+    outcome: { result: input.outcome?.result ?? "SUCCESS", reason: input.outcome?.reason ?? null },
     published: new Date().toISOString(),
     securityContext: { asNumber: null, asOrg: null, isp: null, domain: null, isProxy: null },
-    severity: "INFO",
+    severity: input.severity ?? "INFO",
     debugContext: {
       debugData: { requestId, requestUri: url.pathname, url: `${url.pathname}${url.search}`, ...input.debugData },
     },
@@ -262,6 +312,7 @@ export function recordManagementEvent(
   auth: { login: string },
   eventType: LogEventType,
   target: LogTarget[],
+  debugData?: Record<string, unknown>,
 ): void {
   const okta = getOktaStore(store);
   const authorization = c.req.header("Authorization") ?? "";
@@ -290,7 +341,14 @@ export function recordManagementEvent(
       : { id: null, type: "User", alternateId: auth.login, displayName: auth.login, detailEntry: null };
     if (/^ssws\s+/i.test(authorization)) transactionDetail.requestApiTokenId = apiTokenId(token);
   }
-  recordLogEvent(store, c, { eventType, actor, target, externalSessionId: managementSessionId(c), transactionDetail });
+  recordLogEvent(store, c, {
+    eventType,
+    actor,
+    target,
+    externalSessionId: managementSessionId(c),
+    transactionDetail,
+    debugData,
+  });
 }
 
 // The events of one management call share the `trs` session id Okta gives API calls.
@@ -303,4 +361,14 @@ function managementSessionId(c: Context<AppEnv>): string {
     managementSessions.set(c.req.raw, id);
   }
   return id;
+}
+
+export function authorizationServerTarget(server: { server_id: string; name: string; description: string }): LogTarget {
+  return {
+    id: server.server_id,
+    type: "AuthorizationServerEntity",
+    alternateId: "unknown",
+    displayName: server.name,
+    detailEntry: { authorizationserverdescription: server.description },
+  };
 }

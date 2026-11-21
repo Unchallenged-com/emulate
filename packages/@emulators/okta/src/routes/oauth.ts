@@ -27,6 +27,8 @@ import { getOktaStore } from "../store.js";
 import {
   accessTokenIds,
   appTarget,
+  type LogEventType,
+  type LogTarget,
   appUserTarget,
   oauthClientActor,
   recordLogEvent,
@@ -70,7 +72,23 @@ type StoredRefreshToken = {
   userOktaId: string;
   username: string;
   nonce: string | null;
+  /** The Okta session of the sign-in the grant came from. */
+  sessionId?: string;
 };
+
+/** The user and Okta session of each ID token issued, so that a logout with `id_token_hint` names them. */
+function getIdTokenSessions(store: Store): Map<string, { userOktaId: string; sessionId: string | null }> {
+  let map = store.getData<Map<string, { userOktaId: string; sessionId: string | null }>>("okta.oauth.idTokenSessions");
+  if (!map) {
+    map = new Map();
+    store.setData("okta.oauth.idTokenSessions", map);
+  }
+  return map;
+}
+
+function idTokenKey(idToken: string): string {
+  return createHash("sha256").update(idToken).digest("hex");
+}
 
 type ResolvedServer = {
   authServerId: string;
@@ -362,9 +380,126 @@ export function revokeUserOAuthTokens(store: Store, userOktaId: string, tokenMap
   }
 }
 
+type OAuthEventKind =
+  | "authorize.code"
+  | "token.grant.access_token"
+  | "token.grant.id_token"
+  | "token.grant.refresh_token"
+  | "token.revoke";
+
+const TOKEN_TARGETS = {
+  access_token: { prefix: "AT", displayName: "Access Token" },
+  id_token: { prefix: "ID", displayName: "ID Token" },
+  refresh_token: { prefix: "RT", displayName: "Refresh Token" },
+} as const;
+
+/** A token as the System Log names it: its type, an id and hash derived from it, its expiry and subject. */
+function tokenTarget(
+  type: keyof typeof TOKEN_TARGETS,
+  token: string,
+  expiresAt: number | null,
+  subject: string | null,
+  audience?: string,
+): LogTarget {
+  const { prefix, displayName } = TOKEN_TARGETS[type];
+  const { id, hash } = accessTokenIds(token, prefix);
+  const detailEntry: Record<string, unknown> = {};
+  if (audience) detailEntry.audience = audience;
+  if (expiresAt !== null) detailEntry.expires = new Date(expiresAt * 1000).toISOString();
+  if (subject) detailEntry.subject = subject;
+  detailEntry.hash = hash;
+  return { id, type, alternateId: null, displayName, detailEntry };
+}
+
+/** The user a token was issued for, as OAuth events name it: by id only. */
+function tokenSubject(userOktaId: string): LogTarget {
+  return { id: userOktaId, type: "User", alternateId: null, displayName: null, detailEntry: null };
+}
+
 export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): void {
   const oktaStore = getOktaStore(store);
   const SERVICE_LABEL = "Okta";
+
+  // OAuth events: `app.oauth2.*` for the org authorization server, `app.oauth2.as.*` for custom servers, whose
+  // records also name the server.
+  const recordOAuthEvent = (
+    c: Context<AppEnv>,
+    authServerId: string,
+    kind: OAuthEventKind,
+    input: {
+      clientId: string;
+      target: LogTarget[];
+      sessionId?: string | null;
+      debugData: Record<string, unknown>;
+      clientIdOnRecord?: boolean;
+    },
+  ) => {
+    const custom = authServerId !== ORG_AUTH_SERVER_ID;
+    const debugData = { ...input.debugData };
+    if (custom) {
+      debugData.authorizationServer = authServerId;
+      debugData.authorizationServerName =
+        oktaStore.authorizationServers.findOneBy("server_id", authServerId)?.name ?? authServerId;
+    }
+    const sessionId = input.sessionId ?? "unknown";
+    recordLogEvent(store, c, {
+      eventType: (custom ? `app.oauth2.as.${kind}` : `app.oauth2.${kind}`) as LogEventType,
+      actor: oauthClientActor(input.clientId, oktaStore.oauthClients.findOneBy("client_id", input.clientId)),
+      target: input.target,
+      clientId: input.clientIdOnRecord === false ? null : input.clientId,
+      externalSessionId: sessionId,
+      rootSessionId: sessionId,
+      debugData,
+    });
+  };
+
+  // The tokens one grant issued, one event each, in the order Okta records them.
+  const recordUserGrant = (
+    c: Context<AppEnv>,
+    authServerId: string,
+    grant: {
+      clientId: string;
+      userOktaId: string;
+      grantType: "authorization_code" | "refresh_token";
+      clientAuthType: string;
+      grantedScope: string;
+      requestedScope: string;
+      accessToken: string;
+      expiresAt: number;
+      idToken?: string;
+      refreshToken?: string;
+      redirectUri?: string;
+      code?: string;
+    },
+  ) => {
+    const debugData: Record<string, unknown> = {
+      grantType: grant.grantType,
+      clientAuthType: grant.clientAuthType,
+      requestedScopes: parseScope(grant.requestedScope).join(", "),
+      grantedScopes: parseScope(grant.grantedScope).join(", "),
+    };
+    if (grant.redirectUri) debugData.redirectUri = grant.redirectUri;
+    if (grant.code) debugData.authCode = accessTokenIds(grant.code).hash;
+    const subject = tokenSubject(grant.userOktaId);
+    const tokens: Array<[OAuthEventKind, LogTarget]> = [
+      ["token.grant.access_token", tokenTarget("access_token", grant.accessToken, grant.expiresAt, grant.userOktaId)],
+    ];
+    if (grant.idToken) {
+      tokens.push([
+        "token.grant.id_token",
+        tokenTarget("id_token", grant.idToken, grant.expiresAt, grant.userOktaId, grant.clientId),
+      ]);
+    }
+    if (grant.refreshToken) {
+      tokens.push([
+        "token.grant.refresh_token",
+        tokenTarget("refresh_token", grant.refreshToken, null, grant.userOktaId),
+      ]);
+    }
+    for (const [kind, target] of tokens) {
+      recordOAuthEvent(c, authServerId, kind, { clientId: grant.clientId, target: [subject, target], debugData });
+    }
+  };
 
   app.get("/.well-known/openid-configuration", (c) => {
     const server = resolveServer(ORG_AUTH_SERVER_ID, baseUrl, oktaStore);
@@ -557,6 +692,7 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
       actor: userEntity(user),
       target: linkedApp ? [appTarget(linkedApp)] : [],
       externalSessionId: signInSession,
+      rootSessionId: signInSession,
     });
 
     if (
@@ -565,6 +701,15 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
         .findBy("app_okta_id", linkedApp.okta_id)
         .some((assignment) => assignment.user_okta_id === user.okta_id)
     ) {
+      recordLogEvent(store, c, {
+        eventType: "app.generic.unauth_app_access_attempt",
+        actor: userEntity(user),
+        target: [appTarget(linkedApp)],
+        externalSessionId: signInSession,
+        rootSessionId: signInSession,
+        outcome: { result: "FAILURE" },
+        severity: "WARN",
+      });
       const denial: Record<string, string> = {
         error: "access_denied",
         error_description: "User is not assigned to the client application.",
@@ -590,6 +735,25 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
       authServerId,
       createdAt: Date.now(),
       sessionId: signInSession,
+    });
+
+    const codeId = accessTokenIds(code).hash;
+    recordOAuthEvent(c, authServerId, "authorize.code", {
+      clientId,
+      target: [
+        tokenSubject(user.okta_id),
+        { id: codeId, type: "code", alternateId: null, displayName: "Authorization Code", detailEntry: null },
+      ],
+      sessionId: signInSession,
+      debugData: {
+        grantType: "authorization_code",
+        responseType: "code",
+        responseMode,
+        redirectUri,
+        requestedScopes: parseScope(scope).join(", "),
+        grantedScopes: parseScope(scope).join(", "),
+        userId: user.okta_id,
+      },
     });
 
     debug("okta.oauth", `[callback] code=${code.slice(0, 8)}... user=${user.login} server=${authServerId}`);
@@ -692,6 +856,7 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
         userOktaId: user.okta_id,
         username: user.login,
         nonce: pending.nonce,
+        sessionId: pending.sessionId,
       });
 
       tokenMap?.set(accessToken, {
@@ -701,6 +866,10 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
       });
 
       const idToken = await createIdToken(oktaStore, user, audienceClient, pending.nonce, server.issuer, scope);
+      getIdTokenSessions(store).set(idTokenKey(idToken), {
+        userOktaId: user.okta_id,
+        sessionId: pending.sessionId ?? null,
+      });
 
       const linkedApp = findLinkedApp(oktaStore, pending.clientId);
       if (linkedApp) {
@@ -710,9 +879,25 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
           target: [appTarget(linkedApp, { signOnModeType: "OPENID_CONNECT" }), appUserTarget(user)],
           clientId: pending.clientId,
           externalSessionId: pending.sessionId ?? null,
+          rootSessionId: pending.sessionId,
           debugData: { signOnMode: "OpenID Connect", redirectUri: pending.redirectUri },
         });
       }
+
+      recordUserGrant(c, authServerId, {
+        clientId: audienceClient,
+        userOktaId: user.okta_id,
+        grantType: "authorization_code",
+        clientAuthType: clientAuthType(c, validatedClient),
+        grantedScope: scope,
+        requestedScope: requestedScope,
+        accessToken,
+        expiresAt: now + 3600,
+        idToken,
+        refreshToken: newRefreshToken,
+        redirectUri: pending.redirectUri,
+        code,
+      });
 
       return c.json({
         token_type: "Bearer",
@@ -785,7 +970,24 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
           server.issuer,
           scope,
         );
+        getIdTokenSessions(store).set(idTokenKey(response.id_token as string), {
+          userOktaId: user.okta_id,
+          sessionId: existing.sessionId ?? null,
+        });
       }
+
+      recordUserGrant(c, authServerId, {
+        clientId: existing.clientId,
+        userOktaId: user.okta_id,
+        grantType: "refresh_token",
+        clientAuthType: clientAuthType(c, validatedClient),
+        grantedScope: scope,
+        requestedScope,
+        accessToken: nextAccessToken,
+        expiresAt: now + 3600,
+        idToken: response.id_token as string | undefined,
+        refreshToken: nextRefreshToken,
+      });
 
       return c.json(response);
     }
@@ -820,24 +1022,10 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
         scopes: parseScope(scope),
       });
 
-      const { id, hash } = accessTokenIds(accessToken);
-      recordLogEvent(store, c, {
-        eventType:
-          authServerId === ORG_AUTH_SERVER_ID
-            ? "app.oauth2.token.grant.access_token"
-            : "app.oauth2.as.token.grant.access_token",
-        actor: oauthClientActor(clientId, validatedClient ?? undefined),
-        target: [
-          {
-            id,
-            type: "access_token",
-            alternateId: null,
-            displayName: "Access Token",
-            detailEntry: { expires: new Date((now + 3600) * 1000).toISOString(), hash },
-          },
-        ],
-        externalSessionId: "unknown",
-        rootSessionId: "unknown",
+      recordOAuthEvent(c, authServerId, "token.grant.access_token", {
+        clientId,
+        target: [tokenTarget("access_token", accessToken, now + 3600, null)],
+        clientIdOnRecord: false,
         debugData: {
           grantType: "client_credentials",
           clientAuthType: clientAuthType(c, validatedClient),
@@ -899,6 +1087,19 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
 
     const body = await parseTokenLikeBody(c);
     const token = body.token ?? "";
+    const access = getAccessTokens(store).get(token);
+    const refresh = getRefreshTokens(store).get(token);
+    if (access || refresh) {
+      const target = access
+        ? tokenTarget("access_token", token, access.expiresAt, access.userOktaId ?? access.clientId)
+        : tokenTarget("refresh_token", token, null, refresh!.userOktaId);
+      recordOAuthEvent(c, authServerId, "token.revoke", {
+        clientId: (access ?? refresh)!.clientId,
+        target: [target],
+        clientIdOnRecord: false,
+        debugData: {},
+      });
+    }
     getAccessTokens(store).delete(token);
     getRefreshTokens(store).delete(token);
     tokenMap?.delete(token);
@@ -961,6 +1162,20 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
   const handleLogout = (c: Context<AppEnv>, authServerId: string): Response => {
     const server = resolveServer(authServerId, baseUrl, oktaStore);
     if (!server) return oktaError(c, 404, "E0000007", `Not found: authorization server '${authServerId}'`);
+
+    // The emulator keeps no Okta session: the logout is recorded for the user and session of the ID token hint.
+    const hint = c.req.query("id_token_hint");
+    const signedIn = hint ? getIdTokenSessions(store).get(idTokenKey(hint)) : undefined;
+    const signedInUser = signedIn ? oktaStore.users.findOneBy("okta_id", signedIn.userOktaId) : undefined;
+    if (signedIn && signedInUser) {
+      recordLogEvent(store, c, {
+        eventType: "user.session.end",
+        actor: userEntity(signedInUser),
+        target: [userEntity(signedInUser)],
+        externalSessionId: signedIn.sessionId,
+        ...(signedIn.sessionId ? { rootSessionId: signedIn.sessionId } : {}),
+      });
+    }
 
     const postLogoutRedirectUri = c.req.query("post_logout_redirect_uri");
     if (!postLogoutRedirectUri) return c.text("Logged out");

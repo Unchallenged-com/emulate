@@ -227,7 +227,16 @@ describe("Okta System Log events", () => {
       form({ ...client, grant_type: "authorization_code", code, redirect_uri: redirectUri }),
     );
 
-    const [start, sso] = await events(app);
+    const recorded = await events(app);
+    expect(recorded.map((event) => event.eventType)).toEqual([
+      "user.session.start",
+      "app.oauth2.as.authorize.code",
+      "user.authentication.sso",
+      "app.oauth2.as.token.grant.access_token",
+      "app.oauth2.as.token.grant.id_token",
+      "app.oauth2.as.token.grant.refresh_token",
+    ]);
+    const [start, , sso] = recorded;
     expect(start).toMatchObject({
       eventType: "user.session.start",
       displayMessage: "User login to Okta",
@@ -252,14 +261,182 @@ describe("Okta System Log events", () => {
     });
   });
 
-  it("records the sign-in of a user the app then refuses, without single sign-on", async () => {
+  it("records the sign-in of a user the app then refuses, and the unauthorized access attempt", async () => {
     const app = createTestApp();
     const callback = await app.request(
       `${base}/oauth2/default/v1/authorize/callback`,
       form({ user_ref: "00u_bob", client_id: client.client_id, redirect_uri: redirectUri, scope: "openid" }),
     );
     expect(callback.headers.get("location")).toContain("error=access_denied");
-    expect((await events(app)).map((event) => event.eventType)).toEqual(["user.session.start"]);
+    const [start, attempt, ...rest] = await events(app);
+    expect(rest).toEqual([]);
+    expect(start.eventType).toBe("user.session.start");
+    expect(attempt).toMatchObject({
+      eventType: "app.generic.unauth_app_access_attempt",
+      displayMessage: "User attempted unauthorized access to app",
+      legacyEventType: "app.generic.unauth_app_access_attempt",
+      severity: "WARN",
+      outcome: { result: "FAILURE", reason: null },
+      actor: { id: "00u_bob", type: "User" },
+      authenticationContext: {
+        externalSessionId: start.authenticationContext.externalSessionId,
+        rootSessionId: start.authenticationContext.externalSessionId,
+      },
+      target: [{ id: "0oa_app", type: "AppInstance", alternateId: "Portal", displayName: "Portal" }],
+    });
+  });
+
+  it("records a logout with the user and session of the ID token hint", async () => {
+    const app = createTestApp();
+    const callback = await app.request(
+      `${base}/oauth2/default/v1/authorize/callback`,
+      form({ user_ref: "00u_alice", client_id: client.client_id, redirect_uri: redirectUri, scope: "openid" }),
+    );
+    const code = new URL(callback.headers.get("location") ?? "").searchParams.get("code") ?? "";
+    const tokens = (await (
+      await app.request(
+        `${base}/oauth2/default/v1/token`,
+        form({ ...client, grant_type: "authorization_code", code, redirect_uri: redirectUri }),
+      )
+    ).json()) as { id_token: string };
+
+    await app.request(`${base}/oauth2/default/v1/logout?id_token_hint=forged`);
+    await app.request(`${base}/oauth2/default/v1/logout?id_token_hint=${tokens.id_token}`);
+
+    const recorded = await events(app);
+    const end = recorded.at(-1);
+    expect(recorded.filter((event) => event.eventType === "user.session.end")).toHaveLength(1);
+    expect(end).toMatchObject({
+      eventType: "user.session.end",
+      displayMessage: "User logout from Okta",
+      legacyEventType: "core.user_auth.logout_success",
+      actor: { id: "00u_alice", type: "User" },
+      authenticationContext: { externalSessionId: recorded[0].authenticationContext.externalSessionId },
+      target: [{ id: "00u_alice", type: "User", alternateId: "alice@example.com" }],
+    });
+  });
+
+  it("records the authorization code request, each token granted, and revocations", async () => {
+    const app = createTestApp();
+    const callback = await app.request(
+      `${base}/oauth2/default/v1/authorize/callback`,
+      form({
+        user_ref: "00u_alice",
+        client_id: client.client_id,
+        redirect_uri: redirectUri,
+        scope: "openid offline_access",
+      }),
+    );
+    const code = new URL(callback.headers.get("location") ?? "").searchParams.get("code") ?? "";
+    const tokens = (await (
+      await app.request(
+        `${base}/oauth2/default/v1/token`,
+        form({ ...client, grant_type: "authorization_code", code, redirect_uri: redirectUri }),
+      )
+    ).json()) as { access_token: string; refresh_token: string };
+    await app.request(
+      `${base}/oauth2/default/v1/token`,
+      form({ ...client, grant_type: "refresh_token", refresh_token: tokens.refresh_token }),
+    );
+    await app.request(`${base}/oauth2/default/v1/revoke`, form({ ...client, token: tokens.access_token }));
+    await app.request(`${base}/oauth2/default/v1/revoke`, form({ ...client, token: "never-issued" }));
+
+    const recorded = (await events(app)).filter((event) => event.eventType.startsWith("app.oauth2"));
+    expect(recorded.map((event) => [event.eventType, event.debugContext.debugData.grantType])).toEqual([
+      ["app.oauth2.as.authorize.code", "authorization_code"],
+      ["app.oauth2.as.token.grant.access_token", "authorization_code"],
+      ["app.oauth2.as.token.grant.id_token", "authorization_code"],
+      ["app.oauth2.as.token.grant.refresh_token", "authorization_code"],
+      ["app.oauth2.as.token.grant.access_token", "refresh_token"],
+      ["app.oauth2.as.token.grant.id_token", "refresh_token"],
+      ["app.oauth2.as.token.grant.refresh_token", "refresh_token"],
+      ["app.oauth2.as.token.revoke", undefined],
+    ]);
+    const [authorize, access, id, , , , , revoke] = recorded;
+    expect(authorize).toMatchObject({
+      displayMessage: "OAuth2 authorization code request",
+      legacyEventType: "app.oauth2.as.authorize.code_success",
+      actor: { id: client.client_id, type: "PublicClientApp", alternateId: client.client_id, displayName: "Portal" },
+      client: { id: client.client_id },
+      target: [
+        { id: "00u_alice", type: "User", alternateId: null, displayName: null },
+        { type: "code", displayName: "Authorization Code" },
+      ],
+      debugContext: {
+        debugData: {
+          responseType: "code",
+          redirectUri,
+          requestedScopes: "openid, offline_access",
+          userId: "00u_alice",
+          authorizationServer: "default",
+          authorizationServerName: "default",
+        },
+      },
+    });
+    expect(authorize.authenticationContext.externalSessionId).toMatch(/^idx/);
+    expect(access).toMatchObject({
+      displayMessage: "OAuth2 access token is granted",
+      legacyEventType: "app.oauth2.as.token.grant.access_token_success",
+      actor: { type: "PublicClientApp", alternateId: client.client_id },
+      authenticationContext: { externalSessionId: "unknown" },
+      debugContext: { debugData: { clientAuthType: "client_secret_post", requestedScopes: "", redirectUri } },
+      target: [
+        { id: "00u_alice", type: "User" },
+        { type: "access_token", displayName: "Access Token", detailEntry: { subject: "00u_alice" } },
+      ],
+    });
+    expect(access.debugContext.debugData.authCode).toBe(authorize.target[1].id);
+    expect(access.target[1].id).toMatch(/^AT\./);
+    expect(id).toMatchObject({
+      displayMessage: "OAuth 2.0 ID token is granted",
+      target: [
+        { type: "User" },
+        { type: "id_token", displayName: "ID Token", detailEntry: { audience: client.client_id } },
+      ],
+    });
+    expect(id.target[1].id).toMatch(/^ID\./);
+    expect(revoke).toMatchObject({
+      displayMessage: "OAuth2 token revocation request",
+      legacyEventType: "app.oauth2.as.token.revoke_success",
+      client: { id: null },
+      target: [{ id: access.target[1].id, type: "access_token", detailEntry: { subject: "00u_alice" } }],
+    });
+  });
+
+  it("records authorization server changes", async () => {
+    const app = createTestApp();
+    await app.request(`${base}/api/v1/authorizationServers`, {
+      method: "POST",
+      headers: admin,
+      body: JSON.stringify({ id: "patients", name: "Patients API", description: "Patient records" }),
+    });
+    await app.request(`${base}/api/v1/authorizationServers/patients/lifecycle/deactivate`, {
+      method: "POST",
+      headers: admin,
+    });
+    await app.request(`${base}/api/v1/authorizationServers/patients`, { method: "DELETE", headers: admin });
+
+    const recorded = await events(app, 'eventType sw "oauth2.as."');
+    expect(recorded.map((event) => event.eventType)).toEqual([
+      "oauth2.as.created",
+      "oauth2.as.deactivated",
+      "oauth2.as.deleted",
+    ]);
+    expect(recorded[0]).toMatchObject({
+      displayMessage: "Authorization server is created.",
+      legacyEventType: "api.oauth2.as.created",
+      actor: { id: "00u_admin" },
+      target: [
+        {
+          id: "patients",
+          type: "AuthorizationServerEntity",
+          alternateId: "unknown",
+          displayName: "Patients API",
+          detailEntry: { authorizationserverdescription: "Patient records" },
+        },
+      ],
+      debugContext: { debugData: { defaultAuthorizationServer: "false" } },
+    });
   });
 
   it("records a client credentials grant, and the service app as the actor of its API calls", async () => {
