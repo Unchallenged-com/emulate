@@ -67,7 +67,6 @@ const APPLICATIONS = new Set([
 const UNSUPPORTED = [
   "orgUnitID",
   "groupIdFilter",
-  "applicationInfoFilter",
   "networkInfoFilter",
   "statusFilter",
   "deviceFilter",
@@ -192,6 +191,14 @@ export function reportsRoutes({ app, store, baseUrl }: RouteContext): void {
     const eventName = c.req.query("eventName");
     const conditions = parseFilters(c.req.query("filters") ?? "");
     const actorIp = c.req.query("actorIpAddress");
+    // "Used to filter on the `oAuthClientId` field present in `ApplicationInfo` message", written
+    // `applicationInfoFilter=oAuthClientId="clientId"`. Google does not document other forms; the emulator refuses them.
+    const applicationFilter = c.req.query("applicationInfoFilter");
+    const oauthClientId =
+      applicationFilter === undefined ? undefined : /^oAuthClientId="([^"]*)"$/.exec(applicationFilter.trim())?.[1];
+    if (applicationFilter !== undefined && oauthClientId === undefined) {
+      return invalid(c, "Invalid Input: applicationInfoFilter");
+    }
 
     const matching = gs.activities
       .findBy("application_name", application)
@@ -200,6 +207,7 @@ export function reportsRoutes({ app, store, baseUrl }: RouteContext): void {
         if (time < start || time > end) return false;
         if (user && activity.actor_profile_id !== user.uid) return false;
         if (actorIp && activity.ip_address !== actorIp) return false;
+        if (oauthClientId !== undefined && activity.actor_oauth_client_id !== oauthClientId) return false;
         // "When retrieving by eventName, the API retrieves the activities where this event occurred. For each
         // activity, the response includes all of the activity's events including the event specified."
         const events = activity.events.filter((event) => !eventName || event.name === eventName);
