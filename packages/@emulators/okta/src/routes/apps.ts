@@ -10,6 +10,7 @@ import {
   userResponse,
 } from "../route-helpers.js";
 import { getOktaStore } from "../store.js";
+import { appTarget, appUserTarget, recordManagementEvent, userEntity } from "../system-log.js";
 
 export function appRoutes({ app, store, baseUrl, tokenMap }: RouteContext): void {
   const oktaStore = getOktaStore(store);
@@ -56,6 +57,7 @@ export function appRoutes({ app, store, baseUrl, tokenMap }: RouteContext): void
       credentials,
     });
 
+    recordManagementEvent(store, c, auth, "application.lifecycle.create", [appTarget(created)]);
     return c.json(appResponse(baseUrl, created), 201);
   });
 
@@ -98,6 +100,11 @@ export function appRoutes({ app, store, baseUrl, tokenMap }: RouteContext): void
         app_okta_id: appEntity.okta_id,
         user_okta_id: user.okta_id,
       });
+      recordManagementEvent(store, c, auth, "application.user_membership.add", [
+        appUserTarget(user),
+        appTarget(appEntity),
+        userEntity(user),
+      ]);
     }
 
     return new Response(null, { status: 204 });
@@ -115,7 +122,14 @@ export function appRoutes({ app, store, baseUrl, tokenMap }: RouteContext): void
     const existing = oktaStore.appAssignments
       .findBy("app_okta_id", appEntity.okta_id)
       .find((assignment) => assignment.user_okta_id === user.okta_id);
-    if (existing) oktaStore.appAssignments.delete(existing.id);
+    if (existing) {
+      oktaStore.appAssignments.delete(existing.id);
+      recordManagementEvent(store, c, auth, "application.user_membership.remove", [
+        appUserTarget(user),
+        appTarget(appEntity),
+        userEntity(user),
+      ]);
+    }
     return new Response(null, { status: 204 });
   });
 
@@ -125,8 +139,9 @@ export function appRoutes({ app, store, baseUrl, tokenMap }: RouteContext): void
     const appEntity = findAppByRef(oktaStore, c.req.param("appId"));
     if (!appEntity) return oktaError(c, 404, "E0000007", "Not found: app");
 
-    const updated = oktaStore.apps.update(appEntity.id, { status: "ACTIVE" });
-    return c.json(appResponse(baseUrl, updated ?? appEntity));
+    const updated = oktaStore.apps.update(appEntity.id, { status: "ACTIVE" }) ?? appEntity;
+    recordManagementEvent(store, c, auth, "application.lifecycle.activate", [appTarget(updated)]);
+    return c.json(appResponse(baseUrl, updated));
   });
 
   app.post("/api/v1/apps/:appId/lifecycle/deactivate", (c) => {
@@ -135,8 +150,9 @@ export function appRoutes({ app, store, baseUrl, tokenMap }: RouteContext): void
     const appEntity = findAppByRef(oktaStore, c.req.param("appId"));
     if (!appEntity) return oktaError(c, 404, "E0000007", "Not found: app");
 
-    const updated = oktaStore.apps.update(appEntity.id, { status: "INACTIVE" });
-    return c.json(appResponse(baseUrl, updated ?? appEntity));
+    const updated = oktaStore.apps.update(appEntity.id, { status: "INACTIVE" }) ?? appEntity;
+    recordManagementEvent(store, c, auth, "application.lifecycle.deactivate", [appTarget(updated)]);
+    return c.json(appResponse(baseUrl, updated));
   });
 
   app.get("/api/v1/apps/:appId", (c) => {
@@ -170,6 +186,7 @@ export function appRoutes({ app, store, baseUrl, tokenMap }: RouteContext): void
           ? (body.credentials as Record<string, unknown>)
           : appEntity.credentials,
     });
+    recordManagementEvent(store, c, auth, "application.lifecycle.update", [appTarget(updated ?? appEntity)]);
     return c.json(appResponse(baseUrl, updated ?? appEntity));
   });
 
@@ -187,6 +204,7 @@ export function appRoutes({ app, store, baseUrl, tokenMap }: RouteContext): void
       oktaStore.appAssignments.delete(assignment.id);
     }
     oktaStore.apps.delete(appEntity.id);
+    recordManagementEvent(store, c, auth, "application.lifecycle.delete", [appTarget(appEntity)]);
     return new Response(null, { status: 204 });
   });
 }

@@ -1,4 +1,5 @@
 import type { Entity } from "@emulators/core";
+import type { LogEvent } from "./system-log.js";
 
 export type OktaUserStatus = "STAGED" | "PROVISIONED" | "ACTIVE" | "SUSPENDED" | "DEPROVISIONED";
 
@@ -69,4 +70,11 @@ export interface OktaGroupMembership extends Entity {
 export interface OktaAppAssignment extends Entity {
   app_okta_id: string;
   user_okta_id: string;
+}
+
+/** A System Log event, kept in the order it was recorded (its `id`). */
+export interface OktaLogEventEntry extends Entity {
+  uuid: string;
+  published: string;
+  event: LogEvent;
 }

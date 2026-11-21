@@ -10,6 +10,7 @@ import {
   userResponse,
 } from "../route-helpers.js";
 import { getOktaStore } from "../store.js";
+import { groupTarget, recordManagementEvent, userEntity } from "../system-log.js";
 
 export function groupRoutes({ app, store, baseUrl, tokenMap }: RouteContext): void {
   const oktaStore = getOktaStore(store);
@@ -56,6 +57,7 @@ export function groupRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
       description: typeof profile.description === "string" ? profile.description : null,
     });
 
+    recordManagementEvent(store, c, auth, "group.lifecycle.create", [groupTarget(created)]);
     return c.json(groupResponse(baseUrl, created), 201);
   });
 
@@ -91,6 +93,7 @@ export function groupRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
         group_okta_id: group.okta_id,
         user_okta_id: user.okta_id,
       });
+      recordManagementEvent(store, c, auth, "group.user_membership.add", [userEntity(user), groupTarget(group)]);
     }
 
     return new Response(null, { status: 204 });
@@ -110,6 +113,7 @@ export function groupRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
       .find((membership) => membership.user_okta_id === user.okta_id);
     if (existing) {
       oktaStore.groupMemberships.delete(existing.id);
+      recordManagementEvent(store, c, auth, "group.user_membership.remove", [userEntity(user), groupTarget(group)]);
     }
 
     return new Response(null, { status: 204 });
@@ -147,6 +151,7 @@ export function groupRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
       description: typeof profile.description === "string" ? profile.description : group.description,
       type: normalizeGroupType(typeof body.type === "string" ? body.type : undefined, group.type),
     });
+    recordManagementEvent(store, c, auth, "group.profile.update", [groupTarget(updated ?? group)]);
     return c.json(groupResponse(baseUrl, updated ?? group));
   });
 
@@ -162,6 +167,7 @@ export function groupRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
     }
 
     oktaStore.groups.delete(group.id);
+    recordManagementEvent(store, c, auth, "group.lifecycle.delete", [groupTarget(group)]);
     return new Response(null, { status: 204 });
   });
 }

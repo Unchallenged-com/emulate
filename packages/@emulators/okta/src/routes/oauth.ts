@@ -24,6 +24,15 @@ import {
 } from "../helpers.js";
 import { findUserByRef, oktaError } from "../route-helpers.js";
 import { getOktaStore } from "../store.js";
+import {
+  accessTokenIds,
+  appTarget,
+  appUserTarget,
+  oauthClientActor,
+  recordLogEvent,
+  sessionId,
+  userEntity,
+} from "../system-log.js";
 
 const keyPairPromise = generateKeyPair("RS256");
 const KID = "emulate-okta-1";
@@ -40,6 +49,8 @@ type PendingCode = {
   codeChallengeMethod: string | null;
   authServerId: string;
   createdAt: number;
+  /** The Okta session the sign-in opened, which the System Log events of the exchange carry. */
+  sessionId?: string;
 };
 
 type StoredAccessToken = {
@@ -216,6 +227,18 @@ function parseClientCredentials(
   }
 
   return { clientId, clientSecret };
+}
+
+/** The app whose `credentials.oauthClient.client_id` is this OIDC client. */
+function findLinkedApp(oktaStore: ReturnType<typeof getOktaStore>, clientId: string) {
+  return oktaStore.apps
+    .all()
+    .find((app) => (app.credentials.oauthClient as { client_id?: unknown } | undefined)?.client_id === clientId);
+}
+
+function clientAuthType(c: Context<AppEnv>, client: OktaOAuthClient | null): string {
+  if (client?.token_endpoint_auth_method === "none") return "none";
+  return (c.req.header("Authorization") ?? "").startsWith("Basic ") ? "client_secret_basic" : "client_secret_post";
 }
 
 interface ClientValidationError {
@@ -525,9 +548,17 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
 
     // Okta only lets users assigned to an app sign in to it. The app is the one whose
     // credentials.oauthClient.client_id is this client; clients without such an app are not checked.
-    const linkedApp = oktaStore.apps
-      .all()
-      .find((app) => (app.credentials.oauthClient as { client_id?: unknown } | undefined)?.client_id === clientId);
+    const linkedApp = findLinkedApp(oktaStore, clientId);
+
+    // The user signs in to Okta first; access to the app is decided after.
+    const signInSession = sessionId("idx");
+    recordLogEvent(store, c, {
+      eventType: "user.session.start",
+      actor: userEntity(user),
+      target: linkedApp ? [appTarget(linkedApp)] : [],
+      externalSessionId: signInSession,
+    });
+
     if (
       linkedApp &&
       !oktaStore.appAssignments
@@ -558,6 +589,7 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
       codeChallengeMethod: codeChallengeMethod || null,
       authServerId,
       createdAt: Date.now(),
+      sessionId: signInSession,
     });
 
     debug("okta.oauth", `[callback] code=${code.slice(0, 8)}... user=${user.login} server=${authServerId}`);
@@ -670,6 +702,18 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
 
       const idToken = await createIdToken(oktaStore, user, audienceClient, pending.nonce, server.issuer, scope);
 
+      const linkedApp = findLinkedApp(oktaStore, pending.clientId);
+      if (linkedApp) {
+        recordLogEvent(store, c, {
+          eventType: "user.authentication.sso",
+          actor: userEntity(user),
+          target: [appTarget(linkedApp, { signOnModeType: "OPENID_CONNECT" }), appUserTarget(user)],
+          clientId: pending.clientId,
+          externalSessionId: pending.sessionId ?? null,
+          debugData: { signOnMode: "OpenID Connect", redirectUri: pending.redirectUri },
+        });
+      }
+
       return c.json({
         token_type: "Bearer",
         expires_in: 3600,
@@ -774,6 +818,32 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
         login: clientId,
         id: 0,
         scopes: parseScope(scope),
+      });
+
+      const { id, hash } = accessTokenIds(accessToken);
+      recordLogEvent(store, c, {
+        eventType:
+          authServerId === ORG_AUTH_SERVER_ID
+            ? "app.oauth2.token.grant.access_token"
+            : "app.oauth2.as.token.grant.access_token",
+        actor: oauthClientActor(clientId, validatedClient ?? undefined),
+        target: [
+          {
+            id,
+            type: "access_token",
+            alternateId: null,
+            displayName: "Access Token",
+            detailEntry: { expires: new Date((now + 3600) * 1000).toISOString(), hash },
+          },
+        ],
+        externalSessionId: "unknown",
+        rootSessionId: "unknown",
+        debugData: {
+          grantType: "client_credentials",
+          clientAuthType: clientAuthType(c, validatedClient),
+          requestedScopes: parseScope(requestedScope).join(", "),
+          grantedScopes: parseScope(scope).join(", "),
+        },
       });
 
       return c.json({

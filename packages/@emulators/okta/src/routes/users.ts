@@ -4,6 +4,7 @@ import { findUserByRef, oktaError, readJsonObject, requireManagementAuth, userRe
 import { getOktaStore } from "../store.js";
 import { revokeUserOAuthTokens } from "./oauth.js";
 import type { OktaUser, OktaUserStatus } from "../entities.js";
+import { groupTarget, recordManagementEvent, userEntity, type LogEventType } from "../system-log.js";
 
 function updateUserProfile(user: OktaUser, profile: Record<string, unknown>): Partial<OktaUser> {
   const nextFirstName = typeof profile.firstName === "string" ? profile.firstName : user.first_name;
@@ -39,6 +40,18 @@ function setLifecycleStatus(user: OktaUser, target: OktaUserStatus): Partial<Okt
 
 export function userRoutes({ app, store, baseUrl, tokenMap }: RouteContext): void {
   const oktaStore = getOktaStore(store);
+
+  const lifecycle = (path: string, target: OktaUserStatus, eventType: LogEventType) => {
+    app.post(`/api/v1/users/:userId/lifecycle/${path}`, (c) => {
+      const auth = requireManagementAuth(c, tokenMap);
+      if (auth instanceof Response) return auth;
+      const user = findUserByRef(oktaStore, c.req.param("userId"));
+      if (!user) return oktaError(c, 404, "E0000007", "Not found: user");
+      const updated = oktaStore.users.update(user.id, setLifecycleStatus(user, target)) ?? user;
+      recordManagementEvent(store, c, auth, eventType, [userEntity(updated)]);
+      return c.json(userResponse(baseUrl, updated));
+    });
+  };
 
   app.get("/api/v1/users", (c) => {
     const auth = requireManagementAuth(c, tokenMap);
@@ -126,6 +139,8 @@ export function userRoutes({ app, store, baseUrl, tokenMap }: RouteContext): voi
       time_zone: typeof profile.timeZone === "string" ? profile.timeZone : "UTC",
     });
 
+    recordManagementEvent(store, c, auth, "user.lifecycle.create", [userEntity(created)]);
+    if (activate) recordManagementEvent(store, c, auth, "user.lifecycle.activate", [userEntity(created)]);
     return c.json(userResponse(baseUrl, created), 201);
   });
 
@@ -169,14 +184,7 @@ export function userRoutes({ app, store, baseUrl, tokenMap }: RouteContext): voi
     );
   });
 
-  app.post("/api/v1/users/:userId/lifecycle/activate", (c) => {
-    const auth = requireManagementAuth(c, tokenMap);
-    if (auth instanceof Response) return auth;
-    const user = findUserByRef(oktaStore, c.req.param("userId"));
-    if (!user) return oktaError(c, 404, "E0000007", "Not found: user");
-    const updated = oktaStore.users.update(user.id, setLifecycleStatus(user, "ACTIVE"));
-    return c.json(userResponse(baseUrl, updated ?? user));
-  });
+  lifecycle("activate", "ACTIVE", "user.lifecycle.activate");
 
   app.delete("/api/v1/users/:userId/sessions", (c) => {
     const auth = requireManagementAuth(c, tokenMap);
@@ -184,35 +192,15 @@ export function userRoutes({ app, store, baseUrl, tokenMap }: RouteContext): voi
     const user = findUserByRef(oktaStore, c.req.param("userId"));
     if (!user) return oktaError(c, 404, "E0000007", "Not found: user");
     if (c.req.query("oauthTokens") === "true") revokeUserOAuthTokens(store, user.okta_id, tokenMap);
+    recordManagementEvent(store, c, auth, "user.session.clear", [userEntity(user)]);
     return c.body(null, 204);
   });
 
-  app.post("/api/v1/users/:userId/lifecycle/deactivate", (c) => {
-    const auth = requireManagementAuth(c, tokenMap);
-    if (auth instanceof Response) return auth;
-    const user = findUserByRef(oktaStore, c.req.param("userId"));
-    if (!user) return oktaError(c, 404, "E0000007", "Not found: user");
-    const updated = oktaStore.users.update(user.id, setLifecycleStatus(user, "DEPROVISIONED"));
-    return c.json(userResponse(baseUrl, updated ?? user));
-  });
+  lifecycle("deactivate", "DEPROVISIONED", "user.lifecycle.deactivate");
 
-  app.post("/api/v1/users/:userId/lifecycle/suspend", (c) => {
-    const auth = requireManagementAuth(c, tokenMap);
-    if (auth instanceof Response) return auth;
-    const user = findUserByRef(oktaStore, c.req.param("userId"));
-    if (!user) return oktaError(c, 404, "E0000007", "Not found: user");
-    const updated = oktaStore.users.update(user.id, setLifecycleStatus(user, "SUSPENDED"));
-    return c.json(userResponse(baseUrl, updated ?? user));
-  });
+  lifecycle("suspend", "SUSPENDED", "user.lifecycle.suspend");
 
-  app.post("/api/v1/users/:userId/lifecycle/unsuspend", (c) => {
-    const auth = requireManagementAuth(c, tokenMap);
-    if (auth instanceof Response) return auth;
-    const user = findUserByRef(oktaStore, c.req.param("userId"));
-    if (!user) return oktaError(c, 404, "E0000007", "Not found: user");
-    const updated = oktaStore.users.update(user.id, setLifecycleStatus(user, "ACTIVE"));
-    return c.json(userResponse(baseUrl, updated ?? user));
-  });
+  lifecycle("unsuspend", "ACTIVE", "user.lifecycle.unsuspend");
 
   app.get("/api/v1/users/:userId", (c) => {
     const auth = requireManagementAuth(c, tokenMap);
@@ -241,8 +229,9 @@ export function userRoutes({ app, store, baseUrl, tokenMap }: RouteContext): voi
       return oktaError(c, 400, "E0000001", "A user with the same login or email already exists");
     }
 
-    const updated = oktaStore.users.update(user.id, updates);
-    return c.json(userResponse(baseUrl, updated ?? user));
+    const updated = oktaStore.users.update(user.id, updates) ?? user;
+    recordManagementEvent(store, c, auth, "user.account.update_profile", [userEntity(updated)]);
+    return c.json(userResponse(baseUrl, updated));
   });
 
   app.post("/api/v1/users/:userId", async (c) => {
@@ -255,8 +244,9 @@ export function userRoutes({ app, store, baseUrl, tokenMap }: RouteContext): voi
     const body = await readJsonObject(c);
     const profile = (body.profile && typeof body.profile === "object" ? body.profile : {}) as Record<string, unknown>;
     const updates = updateUserProfile(user, profile);
-    const updated = oktaStore.users.update(user.id, updates);
-    return c.json(userResponse(baseUrl, updated ?? user));
+    const updated = oktaStore.users.update(user.id, updates) ?? user;
+    recordManagementEvent(store, c, auth, "user.account.update_profile", [userEntity(updated)]);
+    return c.json(userResponse(baseUrl, updated));
   });
 
   app.delete("/api/v1/users/:userId", (c) => {
@@ -268,11 +258,18 @@ export function userRoutes({ app, store, baseUrl, tokenMap }: RouteContext): voi
 
     // Match Okta behavior: first delete request deactivates, second removes.
     if (user.status !== "DEPROVISIONED") {
-      oktaStore.users.update(user.id, setLifecycleStatus(user, "DEPROVISIONED"));
+      const deactivated = oktaStore.users.update(user.id, setLifecycleStatus(user, "DEPROVISIONED")) ?? user;
+      recordManagementEvent(store, c, auth, "user.lifecycle.deactivate", [userEntity(deactivated)]);
       return new Response(null, { status: 204 });
     }
 
+    recordManagementEvent(store, c, auth, "user.lifecycle.delete.initiated", [userEntity(user)]);
     for (const membership of oktaStore.groupMemberships.findBy("user_okta_id", user.okta_id)) {
+      const group = oktaStore.groups.findOneBy("okta_id", membership.group_okta_id);
+      // Okta logs the removal from each group the user was put in, not from built-in groups such as Everyone.
+      if (group && group.type !== "BUILT_IN") {
+        recordManagementEvent(store, c, auth, "group.user_membership.remove", [userEntity(user), groupTarget(group)]);
+      }
       oktaStore.groupMemberships.delete(membership.id);
     }
     for (const assignment of oktaStore.appAssignments.findBy("user_okta_id", user.okta_id)) {
@@ -280,6 +277,10 @@ export function userRoutes({ app, store, baseUrl, tokenMap }: RouteContext): voi
     }
 
     oktaStore.users.delete(user.id);
+    // Once the user is gone, its login is no longer known: the target's alternate id is the user id.
+    recordManagementEvent(store, c, auth, "user.lifecycle.delete.completed", [
+      { ...userEntity(user), alternateId: user.okta_id },
+    ]);
     return new Response(null, { status: 204 });
   });
 
@@ -288,11 +289,13 @@ export function userRoutes({ app, store, baseUrl, tokenMap }: RouteContext): voi
     if (auth instanceof Response) return auth;
     const user = findUserByRef(oktaStore, c.req.param("userId"));
     if (!user) return oktaError(c, 404, "E0000007", "Not found: user");
-    const updated = oktaStore.users.update(user.id, {
-      status: "PROVISIONED",
-      status_changed_at: nowIso(),
-      transitioning_to_status: null,
-    });
-    return c.json(userResponse(baseUrl, updated ?? user));
+    const updated =
+      oktaStore.users.update(user.id, {
+        status: "PROVISIONED",
+        status_changed_at: nowIso(),
+        transitioning_to_status: null,
+      }) ?? user;
+    recordManagementEvent(store, c, auth, "user.lifecycle.reactivate", [userEntity(updated)]);
+    return c.json(userResponse(baseUrl, updated));
   });
 }
