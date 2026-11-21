@@ -75,6 +75,24 @@ An app whose `credentials.oauthClient.client_id` names an OIDC client restricts 
 - `POST /api/v1/authorizationServers/:authServerId/lifecycle/activate` — activate
 - `POST /api/v1/authorizationServers/:authServerId/lifecycle/deactivate` — deactivate
 
+## Administrator roles
+
+Standard administrator roles assigned to users (`API_ACCESS_MANAGEMENT_ADMIN`, `APP_ADMIN`, `GROUP_MEMBERSHIP_ADMIN`, `HELP_DESK_ADMIN`, `ORG_ADMIN`, `READ_ONLY_ADMIN`, `REPORT_ADMIN`, `SUPER_ADMIN`, `USER_ADMIN`), seeded with `role_assignments`. Assigning a role the user already holds returns `409` with `E0000090`. Each change is recorded in the System Log: `user.account.privilege.grant` with the roles the user holds after it, or `user.account.privilege.revoke` when the user has none left. Roles are not enforced on management calls.
+
+- `GET /api/v1/users/:userId/roles` — list a user's role assignments
+- `POST /api/v1/users/:userId/roles` — assign a standard role (`{ "type": "HELP_DESK_ADMIN" }`)
+- `GET /api/v1/users/:userId/roles/:roleAssignmentId` — get a role assignment
+- `DELETE /api/v1/users/:userId/roles/:roleAssignmentId` — unassign a role
+
+## API tokens
+
+API tokens seeded with `api_tokens` (`token`, `name`, `user_okta_id`, optional `id`) authenticate `SSWS` calls as the user who created them, and the System Log records their id. A token unused for 30 days, revoked, or whose user is deactivated is refused with `401` and `E0000011`, in permissive mode too. Revocations are recorded as `system.api_token.revoke`. Tokens from the global `tokens` config keep working as before and are not listed.
+
+- `GET /api/v1/api-tokens` — list active API token metadata
+- `GET /api/v1/api-tokens/:apiTokenId` — get an API token's metadata
+- `DELETE /api/v1/api-tokens/:apiTokenId` — revoke an API token
+- `DELETE /api/v1/api-tokens/current` — revoke the API token of the request
+
 ## System Log
 
 The emulator records what users, administrators and clients do as Okta's System Log events (LogEvent records, with Okta's event types, actor, client address, targets, outcome and transaction):
@@ -85,6 +103,7 @@ The emulator records what users, administrators and clients do as Okta's System 
 - Groups: `group.lifecycle.create` and `delete`, `group.profile.update`, `group.user_membership.add` and `remove`.
 - Apps: `application.lifecycle.create`, `update`, `activate`, `deactivate` and `delete`, `application.user_membership.add` and `remove`.
 - Authorization servers: `oauth2.as.created`, `updated`, `activated`, `deactivated` and `deleted`.
+- Administrators: `user.account.privilege.grant` and `user.account.privilege.revoke` for role changes, and `system.api_token.revoke`.
 
 A management call is recorded with the token's user as the actor and the API token's id in `transaction.detail.requestApiTokenId`; a call made with a client credentials access token has the service app as the actor. Geolocation and network fields (`geographicalContext`, `securityContext`) are null.
 

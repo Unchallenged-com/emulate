@@ -8,6 +8,8 @@ import type {
   OktaGroupMembership,
   OktaAppAssignment,
   OktaLogEventEntry,
+  OktaRoleAssignment,
+  OktaApiToken,
 } from "./entities.js";
 
 export interface OktaStore {
@@ -19,6 +21,8 @@ export interface OktaStore {
   groupMemberships: Collection<OktaGroupMembership>;
   appAssignments: Collection<OktaAppAssignment>;
   logEvents: Collection<OktaLogEventEntry>;
+  roleAssignments: Collection<OktaRoleAssignment>;
+  apiTokens: Collection<OktaApiToken>;
 }
 
 export function getOktaStore(store: Store): OktaStore {
@@ -34,5 +38,7 @@ export function getOktaStore(store: Store): OktaStore {
     ]),
     appAssignments: store.collection<OktaAppAssignment>("okta.app_assignments", ["app_okta_id", "user_okta_id"]),
     logEvents: store.collection<OktaLogEventEntry>("okta.log_events", ["uuid"]),
+    roleAssignments: store.collection<OktaRoleAssignment>("okta.role_assignments", ["assignment_id", "user_okta_id"]),
+    apiTokens: store.collection<OktaApiToken>("okta.api_tokens", ["token_id", "token_hash", "user_okta_id"]),
   };
 }

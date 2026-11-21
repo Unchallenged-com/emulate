@@ -18,6 +18,9 @@ import { appRoutes } from "./routes/apps.js";
 import { authorizationServerRoutes } from "./routes/auth-servers.js";
 import { groupRoutes } from "./routes/groups.js";
 import { logRoutes } from "./routes/logs.js";
+import { apiTokenRoutes } from "./routes/api-tokens.js";
+import { roleRoutes, STANDARD_ROLES } from "./routes/roles.js";
+import { hashApiToken, useApiToken } from "./api-tokens.js";
 import { oauthRoutes } from "./routes/oauth.js";
 import { userRoutes } from "./routes/users.js";
 import { oktaError } from "./route-helpers.js";
@@ -78,6 +81,18 @@ export interface OktaSeedConfig {
   app_assignments?: Array<{
     app_okta_id: string;
     user_okta_id: string;
+  }>;
+  /** Standard administrator roles held by users. */
+  role_assignments?: Array<{
+    user_okta_id: string;
+    type: string;
+  }>;
+  /** API tokens (`SSWS`) and the user who created each. */
+  api_tokens?: Array<{
+    token: string;
+    name: string;
+    user_okta_id: string;
+    id?: string;
   }>;
 }
 
@@ -257,6 +272,35 @@ export function seedFromConfig(store: Store, _baseUrl: string, config: OktaSeedC
     }
   }
 
+  if (config.role_assignments) {
+    for (const assignment of config.role_assignments) {
+      if (!STANDARD_ROLES[assignment.type]) throw new Error(`Okta role "${assignment.type}" is not a standard role`);
+      if (!okta.users.findOneBy("okta_id", assignment.user_okta_id)) continue;
+      const held = okta.roleAssignments.findBy("user_okta_id", assignment.user_okta_id);
+      if (held.some((role) => role.type === assignment.type)) continue;
+      okta.roleAssignments.insert({
+        assignment_id: generateOktaId("ra"),
+        user_okta_id: assignment.user_okta_id,
+        type: assignment.type,
+      });
+    }
+  }
+
+  if (config.api_tokens) {
+    for (const token of config.api_tokens) {
+      if (!okta.users.findOneBy("okta_id", token.user_okta_id)) continue;
+      const tokenHash = hashApiToken(token.token);
+      if (okta.apiTokens.findOneBy("token_hash", tokenHash)) continue;
+      okta.apiTokens.insert({
+        token_id: token.id ?? generateOktaId("00T"),
+        token_hash: tokenHash,
+        name: token.name,
+        user_okta_id: token.user_okta_id,
+        last_used_at: new Date().toISOString(),
+      });
+    }
+  }
+
   if (config.app_assignments) {
     for (const assignment of config.app_assignments) {
       const app = okta.apps.findOneBy("okta_id", assignment.app_okta_id);
@@ -273,10 +317,25 @@ export const oktaPlugin: ServicePlugin = {
     // Management API authentication is permissive by default: an unknown credential acts as the default user.
     // Strict mode requires a token the emulator issued, and Okta answers an unknown one with E0000011.
     app.use("*", async (c, next) => {
-      if (store.getData<boolean>("okta.strict_scopes") !== true) return next();
       if (!c.req.path.startsWith("/api/v1/") && c.req.path !== "/api/v1") return next();
       const header = c.req.header("Authorization")?.trim();
       if (!header) return next();
+
+      // An API token the org knows acts as the user who created it; a revoked or expired one is refused in both modes.
+      if (/^SSWS\s+/i.test(header)) {
+        const value = header.replace(/^SSWS\s+/i, "").trim();
+        const check = useApiToken(store, value);
+        if (check === "invalid") return oktaError(c, 401, "E0000011", "Invalid token provided");
+        if (check !== "unknown") {
+          const authUser = { login: check.user.login, id: check.user.id, scopes: ["okta.*"] };
+          c.set("authUser", authUser);
+          c.set("authToken", value);
+          c.set("authScopes", authUser.scopes);
+          return next();
+        }
+      }
+
+      if (store.getData<boolean>("okta.strict_scopes") !== true) return next();
 
       const token = header.replace(/^(SSWS|Bearer)\s+/i, "").trim();
       const user = token ? tokenMap?.get(token) : undefined;
@@ -295,6 +354,8 @@ export const oktaPlugin: ServicePlugin = {
     appRoutes(ctx);
     authorizationServerRoutes(ctx);
     logRoutes(ctx);
+    roleRoutes(ctx);
+    apiTokenRoutes(ctx);
   },
   seed(store: Store, baseUrl: string): void {
     seedDefaults(store, baseUrl);

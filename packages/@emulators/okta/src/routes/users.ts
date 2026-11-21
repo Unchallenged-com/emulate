@@ -3,6 +3,7 @@ import { boolFromQuery, generateOktaId, nowIso, userDisplayName } from "../helpe
 import { findUserByRef, oktaError, readJsonObject, requireManagementAuth, userResponse } from "../route-helpers.js";
 import { getOktaStore } from "../store.js";
 import { revokeUserOAuthTokens } from "./oauth.js";
+import { revokeUserApiTokens } from "../api-tokens.js";
 import type { OktaUser, OktaUserStatus } from "../entities.js";
 import { groupTarget, recordManagementEvent, userEntity, type LogEventType } from "../system-log.js";
 
@@ -48,6 +49,8 @@ export function userRoutes({ app, store, baseUrl, tokenMap }: RouteContext): voi
       const user = findUserByRef(oktaStore, c.req.param("userId"));
       if (!user) return oktaError(c, 404, "E0000007", "Not found: user");
       const updated = oktaStore.users.update(user.id, setLifecycleStatus(user, target)) ?? user;
+      // Deactivating a user deprovisions the API tokens they created.
+      if (target === "DEPROVISIONED") revokeUserApiTokens(store, user.okta_id);
       recordManagementEvent(store, c, auth, eventType, [userEntity(updated)]);
       return c.json(userResponse(baseUrl, updated));
     });
@@ -259,6 +262,7 @@ export function userRoutes({ app, store, baseUrl, tokenMap }: RouteContext): voi
     // Match Okta behavior: first delete request deactivates, second removes.
     if (user.status !== "DEPROVISIONED") {
       const deactivated = oktaStore.users.update(user.id, setLifecycleStatus(user, "DEPROVISIONED")) ?? user;
+      revokeUserApiTokens(store, user.okta_id);
       recordManagementEvent(store, c, auth, "user.lifecycle.deactivate", [userEntity(deactivated)]);
       return new Response(null, { status: 204 });
     }
@@ -274,6 +278,9 @@ export function userRoutes({ app, store, baseUrl, tokenMap }: RouteContext): voi
     }
     for (const assignment of oktaStore.appAssignments.findBy("user_okta_id", user.okta_id)) {
       oktaStore.appAssignments.delete(assignment.id);
+    }
+    for (const role of oktaStore.roleAssignments.findBy("user_okta_id", user.okta_id)) {
+      oktaStore.roleAssignments.delete(role.id);
     }
 
     oktaStore.users.delete(user.id);

@@ -78,3 +78,19 @@ export interface OktaLogEventEntry extends Entity {
   published: string;
   event: LogEvent;
 }
+
+/** A standard administrator role assigned to a user. */
+export interface OktaRoleAssignment extends Entity {
+  assignment_id: string;
+  user_okta_id: string;
+  type: string;
+}
+
+/** An API token (`SSWS`), kept by the hash of its value. */
+export interface OktaApiToken extends Entity {
+  token_id: string;
+  token_hash: string;
+  name: string;
+  user_okta_id: string;
+  last_used_at: string;
+}

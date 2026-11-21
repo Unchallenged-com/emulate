@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { clientAddress, type AppEnv, type Context, type Store } from "@emulators/core";
-import type { OktaApp, OktaGroup, OktaOAuthClient, OktaUser } from "./entities.js";
+import { findApiToken } from "./api-tokens.js";
+import type { OktaApiToken, OktaApp, OktaGroup, OktaOAuthClient, OktaUser } from "./entities.js";
 import { userDisplayName } from "./helpers.js";
 import { getOktaStore } from "./store.js";
 
@@ -144,6 +145,12 @@ const EVENT_TYPES = {
     legacy: "app.generic.provision.assign_user_to_app",
   },
   "application.user_membership.remove": { displayMessage: "Remove user's application membership", legacy: null },
+  "user.account.privilege.grant": {
+    displayMessage: "Grant user privilege",
+    legacy: "core.user.admin_privilege.granted",
+  },
+  "user.account.privilege.revoke": { displayMessage: "Revoke user privilege", legacy: null },
+  "system.api_token.revoke": { displayMessage: "Revoke API token", legacy: "api.token.revoke" },
 } as const;
 
 export type LogEventType = keyof typeof EVENT_TYPES;
@@ -339,7 +346,9 @@ export function recordManagementEvent(
     actor = user
       ? userEntity(user)
       : { id: null, type: "User", alternateId: auth.login, displayName: auth.login, detailEntry: null };
-    if (/^ssws\s+/i.test(authorization)) transactionDetail.requestApiTokenId = apiTokenId(token);
+    if (/^ssws\s+/i.test(authorization)) {
+      transactionDetail.requestApiTokenId = findApiToken(store, token)?.token_id ?? apiTokenId(token);
+    }
   }
   recordLogEvent(store, c, {
     eventType,
@@ -371,4 +380,8 @@ export function authorizationServerTarget(server: { server_id: string; name: str
     displayName: server.name,
     detailEntry: { authorizationserverdescription: server.description },
   };
+}
+
+export function apiTokenTarget(token: OktaApiToken): LogTarget {
+  return { id: token.token_id, type: "Token", alternateId: "unknown", displayName: token.name, detailEntry: null };
 }
