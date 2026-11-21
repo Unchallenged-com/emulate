@@ -1644,7 +1644,7 @@ function createAttachmentPart(partId: string, attachment: GoogleAttachment) {
   };
 }
 
-function estimateSize(message: GoogleMessage, preBuiltHeaders?: MessageHeader[]): number {
+export function estimateSize(message: GoogleMessage, preBuiltHeaders?: MessageHeader[]): number {
   if (message.raw) {
     return Buffer.byteLength(message.raw, "utf8");
   }

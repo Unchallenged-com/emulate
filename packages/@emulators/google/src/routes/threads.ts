@@ -17,6 +17,7 @@ import {
   untrashLabelIds,
 } from "../helpers.js";
 import { requireGmailUser, parseGoogleBody, getStringArray } from "../route-helpers.js";
+import { MailEvent, recordGmailEvent, recordGmailLabelEvents } from "../reports.js";
 import { getGoogleStore } from "../store.js";
 
 export function threadRoutes({ app, store }: RouteContext): void {
@@ -64,6 +65,7 @@ export function threadRoutes({ app, store }: RouteContext): void {
       return googleApiError(c, 404, "Requested entity was not found.", "notFound", "NOT_FOUND");
     }
 
+    for (const message of messages) recordGmailEvent(c, store, message, MailEvent.accessedByApplication);
     return c.json(
       formatThreadResource(
         gs,
@@ -97,9 +99,12 @@ export function threadRoutes({ app, store }: RouteContext): void {
       );
     }
 
-    const updated = messages.map((message) =>
-      markMessageModified(gs, message, applyLabelMutation(message.label_ids, addLabelIds, removeLabelIds)),
-    );
+    const updated = messages.map((message) => {
+      const before = message.label_ids;
+      const next = markMessageModified(gs, message, applyLabelMutation(message.label_ids, addLabelIds, removeLabelIds));
+      recordGmailLabelEvents(c, store, before, next);
+      return next;
+    });
 
     return c.json(formatThreadResource(gs, updated, "full"));
   });
@@ -114,6 +119,7 @@ export function threadRoutes({ app, store }: RouteContext): void {
     }
 
     const updated = messages.map((message) => markMessageModified(gs, message, trashLabelIds(message.label_ids)));
+    for (const message of updated) recordGmailEvent(c, store, message, MailEvent.movedToTrash);
     return c.json(formatThreadResource(gs, updated, "full"));
   });
 
@@ -127,6 +133,7 @@ export function threadRoutes({ app, store }: RouteContext): void {
     }
 
     const updated = messages.map((message) => markMessageModified(gs, message, untrashLabelIds(message.label_ids)));
+    for (const message of updated) recordGmailEvent(c, store, message, MailEvent.removedFromTrash);
     return c.json(formatThreadResource(gs, updated, "full"));
   });
 
@@ -140,6 +147,7 @@ export function threadRoutes({ app, store }: RouteContext): void {
     }
 
     for (const message of messages) {
+      recordGmailEvent(c, store, message, MailEvent.deleted);
       deleteMessage(gs, message);
     }
 

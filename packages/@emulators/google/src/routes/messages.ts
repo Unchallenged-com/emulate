@@ -20,6 +20,7 @@ import {
   untrashLabelIds,
 } from "../helpers.js";
 import { getStringArray, parseGoogleBody, parseMessageInputFromBody, requireGmailUser } from "../route-helpers.js";
+import { MailEvent, recordGmailEvent, recordGmailLabelEvents } from "../reports.js";
 import { getGoogleStore } from "../store.js";
 
 export function messageRoutes({ app, store }: RouteContext): void {
@@ -70,6 +71,7 @@ export function messageRoutes({ app, store }: RouteContext): void {
         ...messageInput,
         label_ids: defaultLabelIds,
       });
+      if (mode === "send") recordGmailEvent(c, store, message, MailEvent.sent);
 
       return c.json(formatMessageResource(gs, message, "full"));
     } catch {
@@ -127,7 +129,13 @@ export function messageRoutes({ app, store }: RouteContext): void {
       const message = getMessageById(gs, authEmail, messageId);
       if (!message) continue;
 
-      markMessageModified(gs, message, applyLabelMutation(message.label_ids, addLabelIds, removeLabelIds));
+      const before = message.label_ids;
+      const updated = markMessageModified(
+        gs,
+        message,
+        applyLabelMutation(message.label_ids, addLabelIds, removeLabelIds),
+      );
+      recordGmailLabelEvents(c, store, before, updated);
     }
 
     return c.body(null, 204);
@@ -142,7 +150,9 @@ export function messageRoutes({ app, store }: RouteContext): void {
 
     for (const messageId of ids) {
       const message = getMessageById(gs, authEmail, messageId);
-      if (message) deleteMessage(gs, message);
+      if (!message) continue;
+      recordGmailEvent(c, store, message, MailEvent.deleted);
+      deleteMessage(gs, message);
     }
 
     return c.body(null, 204);
@@ -169,6 +179,7 @@ export function messageRoutes({ app, store }: RouteContext): void {
       return googleApiError(c, 404, "Requested entity was not found.", "notFound", "NOT_FOUND");
     }
 
+    recordGmailEvent(c, store, message, MailEvent.attachmentDownloaded);
     return c.json({
       attachmentId: attachment.gmail_id,
       size: attachment.size,
@@ -185,6 +196,8 @@ export function messageRoutes({ app, store }: RouteContext): void {
       return googleApiError(c, 404, "Requested entity was not found.", "notFound", "NOT_FOUND");
     }
 
+    // Every Gmail API call is an application's: "An application accessed a message on behalf of a user".
+    recordGmailEvent(c, store, message, MailEvent.accessedByApplication);
     const url = new URL(c.req.url);
     return c.json(
       formatMessageResource(
@@ -219,11 +232,13 @@ export function messageRoutes({ app, store }: RouteContext): void {
       );
     }
 
+    const before = message.label_ids;
     const updated = markMessageModified(
       gs,
       message,
       applyLabelMutation(message.label_ids, addLabelIds, removeLabelIds),
     );
+    recordGmailLabelEvents(c, store, before, updated);
     return c.json(formatMessageResource(gs, updated, "full"));
   });
 
@@ -236,9 +251,9 @@ export function messageRoutes({ app, store }: RouteContext): void {
       return googleApiError(c, 404, "Requested entity was not found.", "notFound", "NOT_FOUND");
     }
 
-    return c.json(
-      formatMessageResource(gs, markMessageModified(gs, message, trashLabelIds(message.label_ids)), "full"),
-    );
+    const trashed = markMessageModified(gs, message, trashLabelIds(message.label_ids));
+    recordGmailEvent(c, store, trashed, MailEvent.movedToTrash);
+    return c.json(formatMessageResource(gs, trashed, "full"));
   });
 
   app.post("/gmail/v1/users/:userId/messages/:id/untrash", (c) => {
@@ -250,9 +265,9 @@ export function messageRoutes({ app, store }: RouteContext): void {
       return googleApiError(c, 404, "Requested entity was not found.", "notFound", "NOT_FOUND");
     }
 
-    return c.json(
-      formatMessageResource(gs, markMessageModified(gs, message, untrashLabelIds(message.label_ids)), "full"),
-    );
+    const restored = markMessageModified(gs, message, untrashLabelIds(message.label_ids));
+    recordGmailEvent(c, store, restored, MailEvent.removedFromTrash);
+    return c.json(formatMessageResource(gs, restored, "full"));
   });
 
   app.delete("/gmail/v1/users/:userId/messages/:id", (c) => {
@@ -264,6 +279,7 @@ export function messageRoutes({ app, store }: RouteContext): void {
       return googleApiError(c, 404, "Requested entity was not found.", "notFound", "NOT_FOUND");
     }
 
+    recordGmailEvent(c, store, message, MailEvent.deleted);
     deleteMessage(gs, message);
     return c.body(null, 204);
   });

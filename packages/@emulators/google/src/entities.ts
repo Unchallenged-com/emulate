@@ -42,7 +42,10 @@ export interface GoogleGroupMember extends Entity {
 export type GoogleActivityParameter =
   | { name: string; value: string }
   | { name: string; multiValue: string[] }
-  | { name: string; boolValue: boolean };
+  | { name: string; boolValue: boolean }
+  | { name: string; intValue: string }
+  | { name: string; messageValue: { parameter: GoogleActivityParameter[] } }
+  | { name: string; multiMessageValue: Array<{ parameter: GoogleActivityParameter[] }> };
 
 export interface GoogleActivityEvent {
   type: string;
@@ -52,7 +55,7 @@ export interface GoogleActivityEvent {
 
 /** An audit record the Reports API serves (`activities.list`). */
 export interface GoogleActivity extends Entity {
-  application_name: "admin" | "login" | "token";
+  application_name: "admin" | "gmail" | "login" | "token";
   time: string;
   unique_qualifier: string;
   actor_email: string;

@@ -120,12 +120,29 @@ function compare(actual: string, operator: string, expected: string): boolean {
 function parameterValues(parameter: GoogleActivityParameter): string[] {
   if ("multiValue" in parameter) return parameter.multiValue;
   if ("boolValue" in parameter) return [String(parameter.boolValue)];
-  return [parameter.value];
+  if ("intValue" in parameter) return [parameter.intValue];
+  if ("value" in parameter) return [parameter.value];
+  return [];
+}
+
+/**
+ * The parameter a filter names: a top-level one, or a nested one by its full name ("`mail_event_type` ... can be used
+ * as a filter with the full parameter name", `event_info.mail_event_type`, in the Gmail events reference).
+ */
+function findParameter(parameters: GoogleActivityParameter[], name: string): GoogleActivityParameter | undefined {
+  const direct = parameters.find((p) => p.name === name);
+  if (direct) return direct;
+  const dot = name.indexOf(".");
+  if (dot < 0) return undefined;
+  const parent = parameters.find((p) => p.name === name.slice(0, dot));
+  return parent && "messageValue" in parent
+    ? findParameter(parent.messageValue.parameter, name.slice(dot + 1))
+    : undefined;
 }
 
 /** "An empty report is returned if the request's parameter doesn't belong to the `eventName`." */
 function satisfies(parameters: GoogleActivityParameter[], condition: Condition): boolean {
-  const parameter = parameters.find((p) => p.name === condition.name);
+  const parameter = findParameter(parameters, condition.name);
   if (!parameter) return false;
   const values = parameterValues(parameter);
   return condition.operator === "<>"

@@ -1,8 +1,14 @@
 import { randomBytes } from "node:crypto";
 import { clientAddress, type Context, type Store } from "@emulators/core";
 import { etagOf, findUserByKey, getCustomerId } from "./directory.js";
-import type { GoogleActivity, GoogleActivityEvent, GoogleActivityParameter, GoogleUser } from "./entities.js";
-import { getAuthenticatedEmail } from "./helpers.js";
+import type {
+  GoogleActivity,
+  GoogleActivityEvent,
+  GoogleActivityParameter,
+  GoogleMessage,
+  GoogleUser,
+} from "./entities.js";
+import { estimateSize, getAuthenticatedEmail } from "./helpers.js";
 import { tokenGrant } from "./oauth-tokens.js";
 import { getGoogleStore } from "./store.js";
 
@@ -13,6 +19,7 @@ import { getGoogleStore } from "./store.js";
 // - admin: https://developers.google.com/workspace/admin/reports/v1/appendix/activity/admin-user-settings and
 //   https://developers.google.com/workspace/admin/reports/v1/appendix/activity/admin-group-settings
 // - token: https://developers.google.com/workspace/admin/reports/v1/appendix/activity/token
+// - gmail: https://developers.google.com/workspace/admin/reports/v1/appendix/activity/gmail
 
 export type ReportsApplication = GoogleActivity["application_name"];
 
@@ -142,6 +149,99 @@ export function recordAdminActivity(c: Context, store: Store, events: GoogleActi
   record(c, store, "admin", admin, events, requestClientId(c, store));
 }
 
+/** The Gmail log's `mail_event_type` values the emulator records, from the Gmail events reference. */
+export const MailEvent = {
+  sent: 1,
+  markedUnread: 8,
+  movedToInbox: 12,
+  movedToTrash: 13,
+  removedFromTrash: 14,
+  attachmentDownloaded: 17,
+  archived: 26,
+  deleted: 27,
+  accessedByApplication: 33,
+} as const;
+
+const nested = (name: string, parameter: GoogleActivityParameter[]): GoogleActivityParameter => ({
+  name,
+  messageValue: { parameter },
+});
+const int = (name: string, n: number): GoogleActivityParameter => ({ name, intValue: String(n) });
+
+// "Name <address>" or a bare address, as RFC 5322 header values carry them.
+function mailbox(value: string): { address: string; displayName?: string } {
+  const match = /^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/.exec(value);
+  if (match) return { address: match[2].trim(), ...(match[1].trim() ? { displayName: match[1].trim() } : {}) };
+  return { address: value.trim() };
+}
+
+const mailboxes = (header: string | null) =>
+  (header ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map(mailbox);
+
+/**
+ * A Gmail log event (`delivery`, type `delivery_type`) of the mailbox's owner. Field names are those of Google's
+ * Gmail log schema (https://knowledge.workspace.google.com/admin/reports/schema-for-gmail-logs-in-bigquery);
+ * Reports API records nest them as `messageValue` parameters, and recorded activities carry `callerType` `USER`
+ * (third-party parser test records). Only what the emulator knows is filled: no connection, spam or policy
+ * information, `action_type`, `message_set`, or the destinations' `service` and `selector`.
+ */
+export function recordGmailEvent(c: Context, store: Store, message: GoogleMessage, mailEventType: number): void {
+  const user = getGoogleStore(store).users.findOneBy("email", message.user_email);
+  if (!inAccount(user)) return;
+  const from = mailbox(message.from);
+  const destinations = [...mailboxes(message.to), ...mailboxes(message.cc), ...mailboxes(message.bcc)];
+  const attachments = getGoogleStore(store)
+    .attachments.findBy("message_gmail_id", message.gmail_id)
+    .filter((attachment) => attachment.user_email === message.user_email);
+  const eventInfo = [
+    int("mail_event_type", mailEventType),
+    int("timestamp_usec", Date.now() * 1000),
+    { name: "success", boolValue: true },
+    // "Client or device type": the emulator serves the Gmail API only.
+    nested("client_context", [param("client_type", "API")]),
+  ];
+  const messageInfo = [
+    param("rfc2822_message_id", message.message_id),
+    param("subject", message.subject),
+    nested("source", [
+      param("address", from.address),
+      param("from_header_address", from.address),
+      ...(from.displayName ? [param("from_header_displayname", from.displayName)] : []),
+    ]),
+    ...(destinations.length > 0
+      ? [
+          {
+            name: "destination",
+            multiMessageValue: destinations.map(({ address }) => ({ parameter: [param("address", address)] })),
+          },
+        ]
+      : []),
+    int("payload_size", estimateSize(message)),
+    int("num_message_attachments", attachments.length),
+  ];
+  record(c, store, "gmail", user, [
+    {
+      type: "delivery_type",
+      name: "delivery",
+      parameters: [nested("event_info", eventInfo), nested("message_info", messageInfo)],
+    },
+  ]);
+}
+
+/** The Gmail log events of a label change: moved to Inbox, archived, or marked unread. */
+export function recordGmailLabelEvents(c: Context, store: Store, before: string[], message: GoogleMessage): void {
+  const added = (label: string) => !before.includes(label) && message.label_ids.includes(label);
+  if (added("INBOX")) recordGmailEvent(c, store, message, MailEvent.movedToInbox);
+  if (added("UNREAD")) recordGmailEvent(c, store, message, MailEvent.markedUnread);
+  if (before.includes("INBOX") && !message.label_ids.includes("INBOX") && !message.label_ids.includes("TRASH")) {
+    recordGmailEvent(c, store, message, MailEvent.archived);
+  }
+}
+
 /** An activity as the Reports API returns it. */
 export function activityResource(store: Store, activity: GoogleActivity): Record<string, unknown> {
   const resource: Record<string, unknown> = {
@@ -154,8 +254,8 @@ export function activityResource(store: Store, activity: GoogleActivity): Record
       customerId: getCustomerId(store),
     },
     actor: {
-      // Captured responses carry a caller type on Admin activities only.
-      ...(activity.application_name === "admin" ? { callerType: "USER" } : {}),
+      // Captured responses carry a caller type on Admin activities; third-party parser test records, on Gmail ones too.
+      ...(activity.application_name === "admin" || activity.application_name === "gmail" ? { callerType: "USER" } : {}),
       email: activity.actor_email,
       profileId: activity.actor_profile_id,
       ...(activity.actor_oauth_client_id

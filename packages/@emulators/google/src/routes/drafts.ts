@@ -21,6 +21,7 @@ import {
   parseMessageInputFromBody,
   requireGmailUser,
 } from "../route-helpers.js";
+import { MailEvent, recordGmailEvent } from "../reports.js";
 import { getGoogleStore } from "../store.js";
 
 export function draftRoutes({ app, store }: RouteContext): void {
@@ -64,6 +65,7 @@ export function draftRoutes({ app, store }: RouteContext): void {
     if (!message) {
       return googleApiError(c, 404, "Requested entity was not found.", "notFound", "NOT_FOUND");
     }
+    recordGmailEvent(c, store, message, MailEvent.sent);
 
     return c.json({
       id: message.gmail_id,
