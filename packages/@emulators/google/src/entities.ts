@@ -43,6 +43,7 @@ export type GoogleActivityParameter =
   | { name: string; value: string }
   | { name: string; multiValue: string[] }
   | { name: string; boolValue: boolean }
+  | { name: string; multiMessageValue: Array<{ parameter: GoogleActivityParameter[] }> }
   // A parameter written without a value, as recorded activities write a false `is_second_factor`.
   | { name: string };
 
@@ -50,6 +51,15 @@ export interface GoogleActivityEvent {
   type: string;
   name: string;
   parameters: GoogleActivityParameter[];
+  resourceIds?: string[];
+}
+
+/** A resource an activity acted on, in the Reports API's `resourceDetails` form. */
+export interface GoogleActivityResource {
+  id: string;
+  ownerDetails?: { ownerIdentity: Array<Record<string, unknown>>; ownerType: string };
+  title?: string;
+  type: string;
 }
 
 /** An audit record the Reports API serves (`activities.list`). */
@@ -63,6 +73,7 @@ export interface GoogleActivity extends Entity {
   actor_application_name: string | null;
   ip_address: string | null;
   events: GoogleActivityEvent[];
+  resource_details?: GoogleActivityResource[];
 }
 
 export interface GoogleOAuthClient extends Entity {

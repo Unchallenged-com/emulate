@@ -176,6 +176,15 @@ describe("Google Admin SDK Reports API", () => {
     expect(login.etag).toMatch(etag);
     expect(login.actor).toEqual({ email: admin, profileId });
     expect(login).not.toHaveProperty("ownerDomain");
+    // The user the sign-in concerns, as recent records name it.
+    const [resource] = (login as Activity & { resourceDetails: Array<Record<string, unknown>> }).resourceDetails;
+    expect(resource).toEqual({
+      id: expect.stringMatching(/^0[0-9a-v]{13}$/),
+      ownerDetails: { ownerIdentity: [{ customerIdentity: { id: "0example" } }], ownerType: "CUSTOMER" },
+      title: admin,
+      type: "USER",
+    });
+    expect((login.events[0] as { resourceIds?: string[] }).resourceIds).toEqual([resource.id]);
 
     const grants = await report(auth, "token");
     expect(grants.items).toHaveLength(1);
@@ -191,6 +200,15 @@ describe("Google Admin SDK Reports API", () => {
             { name: "client_id", value: desktop.client_id },
             { name: "app_name", value: "IT console" },
             { name: "client_type", value: "NATIVE_DESKTOP" },
+            {
+              name: "scope_data",
+              multiMessageValue: adminScopes.split(" ").map((scope) => ({
+                parameter: [
+                  { name: "scope_name", value: scope },
+                  { name: "product_bucket", multiValue: ["GSUITE_ADMIN"] },
+                ],
+              })),
+            },
             { name: "scope", multiValue: adminScopes.split(" ") },
           ],
         },
@@ -245,6 +263,23 @@ describe("Google Admin SDK Reports API", () => {
             { name: "client_id", value: web.client_id },
             { name: "app_name", value: "Example portal" },
             { name: "client_type", value: "WEB" },
+            {
+              name: "scope_data",
+              multiMessageValue: [
+                {
+                  parameter: [
+                    { name: "scope_name", value: "openid" },
+                    { name: "product_bucket", multiValue: ["IDENTITY"] },
+                  ],
+                },
+                {
+                  parameter: [
+                    { name: "scope_name", value: "email" },
+                    { name: "product_bucket", multiValue: ["IDENTITY", "OTHER"] },
+                  ],
+                },
+              ],
+            },
             { name: "scope", multiValue: ["openid", "email"] },
           ],
         },
