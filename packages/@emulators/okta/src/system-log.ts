@@ -16,7 +16,10 @@ export interface LogActor {
   detailEntry: Record<string, unknown> | null;
 }
 
-export type LogTarget = LogActor;
+export interface LogTarget extends LogActor {
+  /** The values a change replaced and the ones it set, on the events that carry them. */
+  changeDetails?: { from: Record<string, unknown>; to: Record<string, unknown> };
+}
 
 export interface LogEvent {
   actor: LogActor;
@@ -60,6 +63,21 @@ export interface LogEvent {
 const EVENT_TYPES = {
   "user.session.start": { displayMessage: "User login to Okta", legacy: "core.user_auth.login_success" },
   "user.session.clear": { displayMessage: "Clear user session", legacy: null },
+  "policy.lifecycle.create": { displayMessage: "Create policy", legacy: "policy.created" },
+  "policy.lifecycle.update": { displayMessage: "Update policy", legacy: "policy.updated" },
+  "policy.lifecycle.activate": { displayMessage: "Activate policy", legacy: "policy.activated" },
+  "policy.lifecycle.deactivate": { displayMessage: "Deactivate policy", legacy: "policy.deactivated" },
+  "policy.lifecycle.delete": { displayMessage: "Delete policy", legacy: "policy.deleted" },
+  "policy.rule.add": { displayMessage: "Add policy rule", legacy: "policy.rule.added" },
+  "policy.rule.update": { displayMessage: "Update policy rule", legacy: "policy.rule.updated" },
+  "policy.rule.activate": { displayMessage: "Activate policy rule", legacy: "policy.rule.activated" },
+  "policy.rule.deactivate": { displayMessage: "Deactivate policy rule", legacy: "policy.rule.deactivated" },
+  "policy.rule.delete": { displayMessage: "Delete policy rule", legacy: "policy.rule.deleted" },
+  "zone.create": { displayMessage: "Network zone create", legacy: "zone.create" },
+  "zone.update": { displayMessage: "Network zone update", legacy: "zone.update" },
+  "zone.delete": { displayMessage: "Network zone delete", legacy: "zone.delete" },
+  "zone.activate": { displayMessage: "Network zone activate", legacy: "zone.activate" },
+  "zone.deactivate": { displayMessage: "Network zone deactivate", legacy: "zone.deactivate" },
   "user.session.end": { displayMessage: "User logout from Okta", legacy: "core.user_auth.logout_success" },
   "app.generic.unauth_app_access_attempt": {
     displayMessage: "User attempted unauthorized access to app",

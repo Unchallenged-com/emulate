@@ -78,3 +78,37 @@ export interface OktaLogEventEntry extends Entity {
   published: string;
   event: LogEvent;
 }
+
+/** A policy; its type-specific `conditions` and `settings` are kept as given. */
+export interface OktaPolicy extends Entity {
+  policy_id: string;
+  type: string;
+  name: string;
+  description: string | null;
+  status: "ACTIVE" | "INACTIVE";
+  priority: number;
+  conditions: Record<string, unknown> | null;
+  settings: Record<string, unknown> | null;
+}
+
+/** A rule of a policy; its `conditions` and `actions` are kept as given. */
+export interface OktaPolicyRule extends Entity {
+  rule_id: string;
+  policy_id: string;
+  type: string;
+  name: string;
+  status: "ACTIVE" | "INACTIVE";
+  priority: number;
+  conditions: Record<string, unknown> | null;
+  actions: Record<string, unknown> | null;
+}
+
+/** A network zone; the fields of its type (`gateways`, `proxies`, `asns`, `locations`, ...) are kept as given. */
+export interface OktaNetworkZone extends Entity {
+  zone_id: string;
+  type: "IP" | "DYNAMIC" | "DYNAMIC_V2";
+  name: string;
+  status: "ACTIVE" | "INACTIVE";
+  usage: "POLICY" | "BLOCKLIST";
+  fields: Record<string, unknown>;
+}

@@ -75,6 +75,21 @@ An app whose `credentials.oauthClient.client_id` names an OIDC client restricts 
 - `POST /api/v1/authorizationServers/:authServerId/lifecycle/activate` — activate
 - `POST /api/v1/authorizationServers/:authServerId/lifecycle/deactivate` — deactivate
 
+## Policies and network zones
+
+Policies of every type and their rules are stored with their `conditions`, `settings` and `actions` as given, and network zones (`IP`, `DYNAMIC`, `DYNAMIC_V2`) with their addresses and locations. The emulator does not enforce them: sign-in and API calls are not checked against policies or zones. Changes are recorded in the System Log as `policy.lifecycle.*`, `policy.rule.*` (the policy, then the rule, as targets; app sign-in and profile enrollment policies as `RuleSetEntity` and `RuleEntity`), with the changed name, description, priority and group count in `changeDetails` on `policy.lifecycle.update`, and `zone.*` (with the zone's definition in `debugData.zoneData`).
+
+- `GET /api/v1/policies?type=:type` — list policies of a type (`status`, `q`)
+- `POST /api/v1/policies` — create a policy
+- `GET`, `PUT`, `DELETE /api/v1/policies/:policyId` — get, replace, delete a policy
+- `POST /api/v1/policies/:policyId/lifecycle/activate` and `deactivate`
+- `GET`, `POST /api/v1/policies/:policyId/rules` — list, create rules
+- `GET`, `PUT`, `DELETE /api/v1/policies/:policyId/rules/:ruleId` — get, replace, delete a rule
+- `POST /api/v1/policies/:policyId/rules/:ruleId/lifecycle/activate` and `deactivate`
+- `GET`, `POST /api/v1/zones` — list, create network zones
+- `GET`, `PUT`, `DELETE /api/v1/zones/:zoneId` — get, replace, delete a zone (an `ACTIVE` zone cannot be deleted)
+- `POST /api/v1/zones/:zoneId/lifecycle/activate` and `deactivate`
+
 ## System Log
 
 The emulator records what users, administrators and clients do as Okta's System Log events (LogEvent records, with Okta's event types, actor, client address, targets, outcome and transaction):
