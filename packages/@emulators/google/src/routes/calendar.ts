@@ -20,6 +20,7 @@ import {
   requireGoogleAuth,
   requireGmailUser,
 } from "../route-helpers.js";
+import { recordCalendarEvent } from "../reports.js";
 import { getGoogleStore } from "../store.js";
 
 export function calendarRoutes({ app, store, baseUrl }: RouteContext): void {
@@ -90,6 +91,7 @@ export function calendarRoutes({ app, store, baseUrl }: RouteContext): void {
       calendar_google_id: calendar.google_id,
       ...eventInput,
     });
+    recordCalendarEvent(c, store, event, "create_event");
 
     return c.json(formatCalendarEventResource(gs, event));
   });
@@ -103,6 +105,7 @@ export function calendarRoutes({ app, store, baseUrl }: RouteContext): void {
       return googleApiError(c, 404, "Requested entity was not found.", "notFound", "NOT_FOUND");
     }
 
+    recordCalendarEvent(c, store, event, "delete_event");
     deleteCalendarEventRecord(gs, event);
     return c.body(null, 204);
   });

@@ -42,7 +42,8 @@ export interface GoogleGroupMember extends Entity {
 export type GoogleActivityParameter =
   | { name: string; value: string }
   | { name: string; multiValue: string[] }
-  | { name: string; boolValue: boolean };
+  | { name: string; boolValue: boolean }
+  | { name: string; intValue: string };
 
 export interface GoogleActivityEvent {
   type: string;
@@ -52,7 +53,7 @@ export interface GoogleActivityEvent {
 
 /** An audit record the Reports API serves (`activities.list`). */
 export interface GoogleActivity extends Entity {
-  application_name: "admin" | "login" | "token";
+  application_name: "admin" | "calendar" | "login" | "token";
   time: string;
   unique_qualifier: string;
   actor_email: string;
@@ -61,6 +62,8 @@ export interface GoogleActivity extends Entity {
   actor_application_name: string | null;
   ip_address: string | null;
   events: GoogleActivityEvent[];
+  /** "The domain that is affected by the report's event", where recorded activities of the application carry it. */
+  owner_domain?: string;
 }
 
 export interface GoogleOAuthClient extends Entity {

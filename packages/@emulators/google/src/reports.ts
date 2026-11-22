@@ -1,7 +1,13 @@
 import { randomBytes } from "node:crypto";
 import { clientAddress, type Context, type Store } from "@emulators/core";
 import { etagOf, findUserByKey, getCustomerId } from "./directory.js";
-import type { GoogleActivity, GoogleActivityEvent, GoogleActivityParameter, GoogleUser } from "./entities.js";
+import type {
+  GoogleActivity,
+  GoogleActivityEvent,
+  GoogleActivityParameter,
+  GoogleCalendarEvent,
+  GoogleUser,
+} from "./entities.js";
 import { getAuthenticatedEmail } from "./helpers.js";
 import { tokenGrant } from "./oauth-tokens.js";
 import { getGoogleStore } from "./store.js";
@@ -13,6 +19,7 @@ import { getGoogleStore } from "./store.js";
 // - admin: https://developers.google.com/workspace/admin/reports/v1/appendix/activity/admin-user-settings and
 //   https://developers.google.com/workspace/admin/reports/v1/appendix/activity/admin-group-settings
 // - token: https://developers.google.com/workspace/admin/reports/v1/appendix/activity/token
+// - calendar: https://developers.google.com/workspace/admin/reports/v1/appendix/activity/calendar
 
 export type ReportsApplication = GoogleActivity["application_name"];
 
@@ -30,6 +37,7 @@ function record(
   actor: GoogleUser,
   events: GoogleActivityEvent[],
   oauthClientId: string | null = null,
+  ownerDomain?: string,
 ): void {
   const gs = getGoogleStore(store);
   const client = oauthClientId ? gs.oauthClients.findOneBy("client_id", oauthClientId) : undefined;
@@ -44,6 +52,7 @@ function record(
     actor_application_name: oauthClientId ? (client?.name ?? null) : null,
     ip_address: clientAddress(c.req.raw) ?? null,
     events,
+    ...(ownerDomain ? { owner_domain: ownerDomain } : {}),
   });
 }
 
@@ -142,6 +151,63 @@ export function recordAdminActivity(c: Context, store: Store, events: GoogleActi
   record(c, store, "admin", admin, events, requestClientId(c, store));
 }
 
+// "The start time of the event in seconds, stored in Gregorian time"; "subtract 62135683200" for Unix time.
+const GREGORIAN_OFFSET_S = 62135683200;
+const gregorianSeconds = (dateTime: string | null, date: string | null) => {
+  const ms = Date.parse(dateTime ?? (date ? `${date}T00:00:00Z` : ""));
+  return Number.isNaN(ms) ? null : Math.floor(ms / 1000) + GREGORIAN_OFFSET_S;
+};
+
+/**
+ * An event created (`create_event`, with an `add_event_guest` for each guest, in one activity) or deleted
+ * (`delete_event`) through the Calendar API, type `event_change`, by its organizer. The parameters and their order
+ * are those of recorded activities (third-party parser test records of 2024 and 2025); values from the Calendar
+ * events reference: `api_kind` `api_v3` for the Calendar API, and the request's `User-Agent` ("The user agent from the
+ * request that triggered this action"). Recorded calendar activities carry the account's domain as `ownerDomain` and
+ * no `callerType`. The emulator has no recurring or encrypted events: `recurring` and `client_side_encrypted` are `no`.
+ */
+export function recordCalendarEvent(
+  c: Context,
+  store: Store,
+  event: GoogleCalendarEvent,
+  change: "create_event" | "delete_event",
+): void {
+  const gs = getGoogleStore(store);
+  const user = gs.users.findOneBy("email", event.user_email);
+  if (!inAccount(user)) return;
+  const calendar = gs.calendars.findOneBy("google_id", event.calendar_google_id);
+  const calendarId = !calendar || calendar.primary ? event.user_email : calendar.google_id;
+  const common: GoogleActivityParameter[] = [
+    param("event_id", event.google_id),
+    param("organizer_calendar_id", event.user_email),
+    param("calendar_id", calendarId),
+    param("event_title", event.summary),
+    param("recurring", "no"),
+    param("client_side_encrypted", "no"),
+  ];
+  const start = gregorianSeconds(event.start_date_time, event.start_date);
+  const end = gregorianSeconds(event.end_date_time, event.end_date);
+  const times: GoogleActivityParameter[] = [
+    ...(start !== null ? [{ name: "start_time", intValue: String(start) }] : []),
+    ...(end !== null ? [{ name: "end_time", intValue: String(end) }] : []),
+  ];
+  const userAgent = c.req.header("User-Agent");
+  const origin = [param("api_kind", "api_v3"), ...(userAgent ? [param("user_agent", userAgent)] : [])];
+  const events: GoogleActivityEvent[] = [
+    { type: "event_change", name: change, parameters: [...common, ...times, ...origin] },
+  ];
+  if (change === "create_event") {
+    for (const attendee of event.attendees.filter((a) => a.email !== event.user_email)) {
+      events.push({
+        type: "event_change",
+        name: "add_event_guest",
+        parameters: [...common, param("event_guest", attendee.email), ...origin],
+      });
+    }
+  }
+  record(c, store, "calendar", user, events, null, user.hd ?? undefined);
+}
+
 /** An activity as the Reports API returns it. */
 export function activityResource(store: Store, activity: GoogleActivity): Record<string, unknown> {
   const resource: Record<string, unknown> = {
@@ -167,6 +233,7 @@ export function activityResource(store: Store, activity: GoogleActivity): Record
           }
         : {}),
     },
+    ...(activity.owner_domain ? { ownerDomain: activity.owner_domain } : {}),
     ...(activity.ip_address ? { ipAddress: activity.ip_address } : {}),
     events: activity.events,
   };

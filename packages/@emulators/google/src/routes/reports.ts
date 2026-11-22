@@ -119,6 +119,7 @@ function compare(actual: string, operator: string, expected: string): boolean {
 function parameterValues(parameter: GoogleActivityParameter): string[] {
   if ("multiValue" in parameter) return parameter.multiValue;
   if ("boolValue" in parameter) return [String(parameter.boolValue)];
+  if ("intValue" in parameter) return [parameter.intValue];
   return [parameter.value];
 }
 
