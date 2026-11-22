@@ -18,6 +18,7 @@ import { appRoutes } from "./routes/apps.js";
 import { authorizationServerRoutes } from "./routes/auth-servers.js";
 import { groupRoutes } from "./routes/groups.js";
 import { logRoutes } from "./routes/logs.js";
+import { sessionRoutes } from "./routes/sessions.js";
 import { oauthRoutes } from "./routes/oauth.js";
 import { userRoutes } from "./routes/users.js";
 import { oktaError } from "./route-helpers.js";
@@ -295,6 +296,7 @@ export const oktaPlugin: ServicePlugin = {
     appRoutes(ctx);
     authorizationServerRoutes(ctx);
     logRoutes(ctx);
+    sessionRoutes(ctx);
   },
   seed(store: Store, baseUrl: string): void {
     seedDefaults(store, baseUrl);

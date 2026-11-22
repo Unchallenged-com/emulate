@@ -127,15 +127,16 @@ describe("Okta System Log events", () => {
     expect(recorded.map((event) => event.eventType)).toEqual([
       "group.user_membership.add",
       "user.lifecycle.deactivate",
+      "user.session.clear",
       "user.lifecycle.delete.initiated",
       "group.user_membership.remove",
       "user.lifecycle.delete.completed",
     ]);
     expect(recorded[0].target.map((target: any) => target.type)).toEqual(["User", "UserGroup"]);
     expect(recorded[0].target[1]).toMatchObject({ id: "00g_staff", alternateId: "unknown", displayName: "Staff" });
-    expect(recorded[4].target[0]).toMatchObject({ id: "00u_bob", alternateId: "00u_bob" });
-    expect(recorded[4].legacyEventType).toBe("core.user.config.user_status.delete.completed");
-    expect(new Set(recorded.slice(2).map((event) => event.transaction.id)).size).toBe(1);
+    expect(recorded[5].target[0]).toMatchObject({ id: "00u_bob", alternateId: "00u_bob" });
+    expect(recorded[5].legacyEventType).toBe("core.user.config.user_status.delete.completed");
+    expect(new Set(recorded.slice(3).map((event) => event.transaction.id)).size).toBe(1);
   });
 
   it("records user creation, activation, profile updates and session clearing", async () => {
@@ -286,7 +287,7 @@ describe("Okta System Log events", () => {
     });
   });
 
-  it("records a logout with the user and session of the ID token hint", async () => {
+  it("records a logout of the session whose user the ID token hint names", async () => {
     const app = createTestApp();
     const callback = await app.request(
       `${base}/oauth2/default/v1/authorize/callback`,
@@ -300,8 +301,11 @@ describe("Okta System Log events", () => {
       )
     ).json()) as { id_token: string };
 
-    await app.request(`${base}/oauth2/default/v1/logout?id_token_hint=forged`);
-    await app.request(`${base}/oauth2/default/v1/logout?id_token_hint=${tokens.id_token}`);
+    const cookie = (callback.headers.get("set-cookie") ?? "").split(";")[0]!;
+    await app.request(`${base}/oauth2/default/v1/logout?id_token_hint=forged`, { headers: { Cookie: cookie } });
+    await app.request(`${base}/oauth2/default/v1/logout?id_token_hint=${tokens.id_token}`, {
+      headers: { Cookie: cookie },
+    });
 
     const recorded = await events(app);
     const end = recorded.at(-1);

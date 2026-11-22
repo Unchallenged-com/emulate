@@ -72,6 +72,14 @@ Default org server and custom authorization server paths (`/oauth2/:authServerId
 - `POST /api/v1/authorizationServers/:authServerId/lifecycle/activate` — activate
 - `POST /api/v1/authorizationServers/:authServerId/lifecycle/deactivate` — deactivate
 
+### Sessions
+
+Signing in on the sign-in page opens an Okta session, kept in the `idx` cookie (`HttpOnly`, `Secure`, `SameSite=None`). A later authorize request with that cookie signs the user in without the sign-in page, unless it asks `prompt=login` or the last sign-in is older than its `max_age`; `prompt=none` without a session returns `error=login_required` to the redirect URI. A session ends after 120 minutes without use or 24 hours after it opened (the default global session policy). Logout with an `id_token_hint` for the session's user ends the session and clears the cookie, and leaves the user's tokens valid. Revoking a session, revoking a user's sessions, and deactivating or suspending the user end them too; an expired session leaves no record, as in Okta. The System Log ties a session's events together with its id in `authenticationContext.externalSessionId`, and records `user.session.end` for each session a logout or an administrator ends, then `user.session.clear` when an administrator revokes all of a user's sessions or deactivates or suspends the user.
+
+- `GET /api/v1/sessions/:sessionId` — get a session
+- `POST /api/v1/sessions/:sessionId/lifecycle/refresh` — refresh a session's expiry
+- `DELETE /api/v1/sessions/:sessionId` — revoke a session
+
 ### System Log
 
 The emulator records what users, administrators and clients do as Okta's System Log events (LogEvent records, with Okta's event types, actor, client address, targets, outcome and transaction):

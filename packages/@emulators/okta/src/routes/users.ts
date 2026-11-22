@@ -1,8 +1,10 @@
-import { parsePagination, setLinkHeader, type RouteContext } from "@emulators/core";
+import { parsePagination, setLinkHeader, type AppEnv, type Context, type RouteContext } from "@emulators/core";
 import { boolFromQuery, generateOktaId, nowIso, userDisplayName } from "../helpers.js";
 import { findUserByRef, oktaError, readJsonObject, requireManagementAuth, userResponse } from "../route-helpers.js";
 import { getOktaStore } from "../store.js";
 import { revokeUserOAuthTokens } from "./oauth.js";
+import { revokeSession } from "./sessions.js";
+import { userSessions } from "../sessions.js";
 import type { OktaUser, OktaUserStatus } from "../entities.js";
 import { groupTarget, recordManagementEvent, userEntity, type LogEventType } from "../system-log.js";
 
@@ -41,6 +43,13 @@ function setLifecycleStatus(user: OktaUser, target: OktaUserStatus): Partial<Okt
 export function userRoutes({ app, store, baseUrl, tokenMap }: RouteContext): void {
   const oktaStore = getOktaStore(store);
 
+  // Ends every session of the user, one user.session.end each, then records user.session.clear: what Okta writes
+  // when an administrator revokes a user's sessions or deactivates the user.
+  const clearSessions = (c: Context<AppEnv>, auth: { login: string }, user: OktaUser) => {
+    for (const session of userSessions(store, user.okta_id)) revokeSession(store, c, auth, session);
+    recordManagementEvent(store, c, auth, "user.session.clear", [userEntity(user)]);
+  };
+
   const lifecycle = (path: string, target: OktaUserStatus, eventType: LogEventType) => {
     app.post(`/api/v1/users/:userId/lifecycle/${path}`, (c) => {
       const auth = requireManagementAuth(c, tokenMap);
@@ -49,6 +58,8 @@ export function userRoutes({ app, store, baseUrl, tokenMap }: RouteContext): voi
       if (!user) return oktaError(c, 404, "E0000007", "Not found: user");
       const updated = oktaStore.users.update(user.id, setLifecycleStatus(user, target)) ?? user;
       recordManagementEvent(store, c, auth, eventType, [userEntity(updated)]);
+      // Deactivation and suspension end the user's sessions, then record user.session.clear.
+      if (target === "DEPROVISIONED" || target === "SUSPENDED") clearSessions(c, auth, updated);
       return c.json(userResponse(baseUrl, updated));
     });
   };
@@ -191,8 +202,9 @@ export function userRoutes({ app, store, baseUrl, tokenMap }: RouteContext): voi
     if (auth instanceof Response) return auth;
     const user = findUserByRef(oktaStore, c.req.param("userId"));
     if (!user) return oktaError(c, 404, "E0000007", "Not found: user");
+    // "Optionally revokes OpenID Connect and OAuth refresh and access tokens issued to the user" (oauthTokens).
     if (c.req.query("oauthTokens") === "true") revokeUserOAuthTokens(store, user.okta_id, tokenMap);
-    recordManagementEvent(store, c, auth, "user.session.clear", [userEntity(user)]);
+    clearSessions(c, auth, user);
     return c.body(null, 204);
   });
 
@@ -260,6 +272,7 @@ export function userRoutes({ app, store, baseUrl, tokenMap }: RouteContext): voi
     if (user.status !== "DEPROVISIONED") {
       const deactivated = oktaStore.users.update(user.id, setLifecycleStatus(user, "DEPROVISIONED")) ?? user;
       recordManagementEvent(store, c, auth, "user.lifecycle.deactivate", [userEntity(deactivated)]);
+      clearSessions(c, auth, deactivated);
       return new Response(null, { status: 204 });
     }
 

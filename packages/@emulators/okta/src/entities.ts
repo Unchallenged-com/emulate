@@ -78,3 +78,13 @@ export interface OktaLogEventEntry extends Entity {
   published: string;
   event: LogEvent;
 }
+
+/** An Okta session, opened by a sign-in. */
+export interface OktaSession extends Entity {
+  session_id: string;
+  user_okta_id: string;
+  /** The last use of the session, which its idle expiry follows. */
+  last_activity_at: string;
+  /** When the user last authenticated in this session. */
+  authenticated_at: string;
+}

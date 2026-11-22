@@ -14,7 +14,8 @@ import {
   renderFormPostPage,
   renderUserButton,
 } from "@emulators/core";
-import type { OktaOAuthClient, OktaUser } from "../entities.js";
+import type { OktaOAuthClient, OktaSession, OktaUser } from "../entities.js";
+import { clearSessionCookie, cookieSession, endSession, openSession, touchSession } from "../sessions.js";
 import {
   DEFAULT_AUDIENCE,
   DEFAULT_AUTH_SERVER_ID,
@@ -32,7 +33,6 @@ import {
   appUserTarget,
   oauthClientActor,
   recordLogEvent,
-  sessionId,
   userEntity,
 } from "../system-log.js";
 
@@ -585,6 +585,36 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
       clientName = client.name;
     }
 
+    // An existing Okta session signs the user in silently, unless the client asks to prompt (prompt=login) or the last
+    // authentication is older than max_age; prompt=none without one is refused with login_required.
+    const prompts = (c.req.query("prompt") ?? "").split(/\s+/).filter(Boolean);
+    const maxAge = Number.parseInt(c.req.query("max_age") ?? "", 10);
+    const session = prompts.includes("login") ? undefined : cookieSession(store, c);
+    const sessionUser = session ? oktaStore.users.findOneBy("okta_id", session.user_okta_id) : undefined;
+    const fresh =
+      session && (Number.isNaN(maxAge) || Date.now() - Date.parse(session.authenticated_at) <= maxAge * 1000);
+    if (session && sessionUser && sessionUser.status === "ACTIVE" && fresh) {
+      return completeAuthorization(
+        c,
+        authServerId,
+        sessionUser,
+        { redirectUri, scope, state, nonce, clientId, responseMode, codeChallenge, codeChallengeMethod },
+        session,
+        false,
+      );
+    }
+    if (prompts.includes("none")) {
+      const denial: Record<string, string> = {
+        error: "login_required",
+        error_description: "The client specified not to prompt, but the user is not logged in.",
+      };
+      if (state) denial.state = state;
+      if (responseMode === "form_post") return c.html(renderFormPostPage(redirectUri, denial, SERVICE_LABEL));
+      const denialUrl = new URL(redirectUri);
+      for (const [key, value] of Object.entries(denial)) denialUrl.searchParams.set(key, value);
+      return c.redirect(denialUrl.toString(), 302);
+    }
+
     const users = oktaStore.users.all();
     const callbackPath = `${buildOAuthBasePath(authServerId)}/authorize/callback`;
     const buttons = users
@@ -628,72 +658,45 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
   app.get("/oauth2/v1/authorize", (c) => renderAuthorizePage(c, ORG_AUTH_SERVER_ID));
   app.get("/oauth2/:authServerId/v1/authorize", (c) => renderAuthorizePage(c, c.req.param("authServerId")));
 
-  const handleAuthorizeCallback = async (c: Context<AppEnv>, authServerId: string): Promise<Response> => {
-    const server = resolveServer(authServerId, baseUrl, oktaStore);
-    if (!server) return oktaError(c, 404, "E0000007", `Not found: authorization server '${authServerId}'`);
+  type AuthorizationRequest = {
+    redirectUri: string;
+    scope: string;
+    state: string;
+    nonce: string;
+    clientId: string;
+    responseMode: string;
+    codeChallenge: string;
+    codeChallengeMethod: string;
+  };
 
-    const body = await c.req.parseBody();
-    const userRef = bodyStr(body.user_ref);
-    const redirectUri = bodyStr(body.redirect_uri);
-    const scope = bodyStr(body.scope) || "openid profile email";
-    const state = bodyStr(body.state);
-    const nonce = bodyStr(body.nonce);
-    const clientId = bodyStr(body.client_id);
-    const responseMode = bodyStr(body.response_mode) || "query";
-    const codeChallenge = bodyStr(body.code_challenge);
-    const codeChallengeMethod = bodyStr(body.code_challenge_method);
-
-    if (!redirectUri) {
-      return c.html(
-        renderErrorPage("Missing redirect URI", "The redirect_uri parameter is required.", SERVICE_LABEL),
-        400,
-      );
-    }
-
-    const user = findUserByRef(oktaStore, userRef);
-    if (!user) {
-      return c.html(renderErrorPage("Unknown user", "The selected user is not available.", SERVICE_LABEL), 400);
-    }
-
-    // Okta only lets an ACTIVE user sign in; a suspended, deactivated, staged, or provisioned user is refused.
-    if (user.status !== "ACTIVE") {
-      return c.html(renderErrorPage("User not active", "The selected user cannot sign in.", SERVICE_LABEL), 400);
-    }
-
-    const configuredClients = getClientsForServer(oktaStore.oauthClients.all(), authServerId);
-    if (configuredClients.length > 0) {
-      const client = configuredClients.find((entry) => entry.client_id === clientId);
-      if (!client) {
-        return c.html(
-          renderErrorPage("Application not found", `The client_id '${clientId}' is not registered.`, SERVICE_LABEL),
-          400,
-        );
-      }
-      if (!matchesRedirectUri(redirectUri, client.redirect_uris)) {
-        return c.html(
-          renderErrorPage(
-            "Redirect URI mismatch",
-            "The redirect_uri is not registered for this application.",
-            SERVICE_LABEL,
-          ),
-          400,
-        );
-      }
-    }
-
+  // Issues the authorization code of a signed-in user: on a new session after the sign-in page, or silently on the
+  // session of the request's cookie.
+  const completeAuthorization = (
+    c: Context<AppEnv>,
+    authServerId: string,
+    user: OktaUser,
+    request: AuthorizationRequest,
+    session: OktaSession,
+    newSession: boolean,
+  ): Response => {
+    const { redirectUri, scope, state, nonce, clientId, responseMode, codeChallenge, codeChallengeMethod } = request;
     // Okta only lets users assigned to an app sign in to it. The app is the one whose
     // credentials.oauthClient.client_id is this client; clients without such an app are not checked.
     const linkedApp = findLinkedApp(oktaStore, clientId);
 
-    // The user signs in to Okta first; access to the app is decided after.
-    const signInSession = sessionId("idx");
-    recordLogEvent(store, c, {
-      eventType: "user.session.start",
-      actor: userEntity(user),
-      target: linkedApp ? [appTarget(linkedApp)] : [],
-      externalSessionId: signInSession,
-      rootSessionId: signInSession,
-    });
+    // A new session is a sign-in to Okta, recorded before access to the app is decided; a reused one is not.
+    const signInSession = session.session_id;
+    if (newSession) {
+      recordLogEvent(store, c, {
+        eventType: "user.session.start",
+        actor: userEntity(user),
+        target: linkedApp ? [appTarget(linkedApp)] : [],
+        externalSessionId: signInSession,
+        rootSessionId: signInSession,
+      });
+    } else {
+      touchSession(store, session);
+    }
 
     if (
       linkedApp &&
@@ -766,6 +769,70 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
     url.searchParams.set("code", code);
     if (state) url.searchParams.set("state", state);
     return c.redirect(url.toString(), 302);
+  };
+
+  const handleAuthorizeCallback = async (c: Context<AppEnv>, authServerId: string): Promise<Response> => {
+    const server = resolveServer(authServerId, baseUrl, oktaStore);
+    if (!server) return oktaError(c, 404, "E0000007", `Not found: authorization server '${authServerId}'`);
+
+    const body = await c.req.parseBody();
+    const userRef = bodyStr(body.user_ref);
+    const redirectUri = bodyStr(body.redirect_uri);
+    const scope = bodyStr(body.scope) || "openid profile email";
+    const state = bodyStr(body.state);
+    const nonce = bodyStr(body.nonce);
+    const clientId = bodyStr(body.client_id);
+    const responseMode = bodyStr(body.response_mode) || "query";
+    const codeChallenge = bodyStr(body.code_challenge);
+    const codeChallengeMethod = bodyStr(body.code_challenge_method);
+
+    if (!redirectUri) {
+      return c.html(
+        renderErrorPage("Missing redirect URI", "The redirect_uri parameter is required.", SERVICE_LABEL),
+        400,
+      );
+    }
+
+    const user = findUserByRef(oktaStore, userRef);
+    if (!user) {
+      return c.html(renderErrorPage("Unknown user", "The selected user is not available.", SERVICE_LABEL), 400);
+    }
+
+    // Okta only lets an ACTIVE user sign in; a suspended, deactivated, staged, or provisioned user is refused.
+    if (user.status !== "ACTIVE") {
+      return c.html(renderErrorPage("User not active", "The selected user cannot sign in.", SERVICE_LABEL), 400);
+    }
+
+    const configuredClients = getClientsForServer(oktaStore.oauthClients.all(), authServerId);
+    if (configuredClients.length > 0) {
+      const client = configuredClients.find((entry) => entry.client_id === clientId);
+      if (!client) {
+        return c.html(
+          renderErrorPage("Application not found", `The client_id '${clientId}' is not registered.`, SERVICE_LABEL),
+          400,
+        );
+      }
+      if (!matchesRedirectUri(redirectUri, client.redirect_uris)) {
+        return c.html(
+          renderErrorPage(
+            "Redirect URI mismatch",
+            "The redirect_uri is not registered for this application.",
+            SERVICE_LABEL,
+          ),
+          400,
+        );
+      }
+    }
+
+    const session = openSession(store, c, user);
+    return completeAuthorization(
+      c,
+      authServerId,
+      user,
+      { redirectUri, scope, state, nonce, clientId, responseMode, codeChallenge, codeChallengeMethod },
+      session,
+      true,
+    );
   };
 
   app.post("/oauth2/v1/authorize/callback", (c) => handleAuthorizeCallback(c, ORG_AUTH_SERVER_ID));
@@ -1163,17 +1230,21 @@ export function oauthRoutes({ app, store, baseUrl, tokenMap }: RouteContext): vo
     const server = resolveServer(authServerId, baseUrl, oktaStore);
     if (!server) return oktaError(c, 404, "E0000007", `Not found: authorization server '${authServerId}'`);
 
-    // The emulator keeps no Okta session: the logout is recorded for the user and session of the ID token hint.
+    // The logout ends the Okta session of the request's cookie when the ID token hint names its user ("if the subject
+    // matches the current Okta session"); it does not revoke the user's tokens.
     const hint = c.req.query("id_token_hint");
     const signedIn = hint ? getIdTokenSessions(store).get(idTokenKey(hint)) : undefined;
-    const signedInUser = signedIn ? oktaStore.users.findOneBy("okta_id", signedIn.userOktaId) : undefined;
-    if (signedIn && signedInUser) {
+    const session = cookieSession(store, c);
+    const sessionUser = session ? oktaStore.users.findOneBy("okta_id", session.user_okta_id) : undefined;
+    if (session && sessionUser && signedIn?.userOktaId === sessionUser.okta_id) {
+      endSession(store, session);
+      clearSessionCookie(c);
       recordLogEvent(store, c, {
         eventType: "user.session.end",
-        actor: userEntity(signedInUser),
-        target: [userEntity(signedInUser)],
-        externalSessionId: signedIn.sessionId,
-        ...(signedIn.sessionId ? { rootSessionId: signedIn.sessionId } : {}),
+        actor: userEntity(sessionUser),
+        target: [userEntity(sessionUser)],
+        externalSessionId: session.session_id,
+        rootSessionId: session.session_id,
       });
     }
 
