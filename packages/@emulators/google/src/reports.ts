@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { clientAddress, type Context, type Store } from "@emulators/core";
+import { raiseAdminAlerts } from "./alert-center.js";
 import { etagOf, findUserByKey, getCustomerId } from "./directory.js";
 import type { GoogleActivity, GoogleActivityEvent, GoogleActivityParameter, GoogleUser } from "./entities.js";
 import { getAuthenticatedEmail } from "./helpers.js";
@@ -140,6 +141,7 @@ export function recordAdminActivity(c: Context, store: Store, events: GoogleActi
   const admin = email ? findUserByKey(getGoogleStore(store), email) : undefined;
   if (!inAccount(admin) || events.length === 0) return;
   record(c, store, "admin", admin, events, requestClientId(c, store));
+  raiseAdminAlerts(store, admin, events);
 }
 
 /** An activity as the Reports API returns it. */

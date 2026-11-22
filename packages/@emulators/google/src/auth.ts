@@ -100,7 +100,7 @@ export function googleAuthMiddleware(app: Hono<AppEnv>, store: Store): Middlewar
     if (!route) return next();
     const path = route.path.replace(/^\/upload\//, "/");
     if (
-      !/^\/(gmail\/v1|drive\/v3|calendar\/v3|admin\/directory\/v1|admin\/reports\/v1)\//.test(path) &&
+      !/^\/(gmail\/v1|drive\/v3|calendar\/v3|admin\/directory\/v1|admin\/reports\/v1|v1beta1)\//.test(path) &&
       path !== "/oauth2/v2/userinfo"
     ) {
       return next();
@@ -117,7 +117,12 @@ export function googleAuthMiddleware(app: Hono<AppEnv>, store: Store): Middlewar
     }
 
     const key = `${route.method} ${path}`;
-    let required = routeScopes[key] ?? directoryRouteScopes[key] ?? reportsRouteScopes[key] ?? [];
+    let required =
+      routeScopes[key] ??
+      directoryRouteScopes[key] ??
+      reportsRouteScopes[key] ??
+      // Every Alert Center method takes the one scope its discovery document lists.
+      (path.startsWith("/v1beta1/") ? ["https://www.googleapis.com/auth/apps.alerts"] : []);
     if (route.method === "GET" && path === "/drive/v3/files/:fileId" && c.req.query("alt") === "media") {
       required = driveContent;
     }

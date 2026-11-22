@@ -24,6 +24,8 @@ import { settingsRoutes } from "./routes/settings.js";
 import { threadRoutes } from "./routes/threads.js";
 import { getGoogleStore } from "./store.js";
 import { googleAuthMiddleware } from "./auth.js";
+import { seedAlertRules } from "./alert-center.js";
+import { alertCenterRoutes } from "./routes/alert-center.js";
 
 export { getGoogleStore, type GoogleStore } from "./store.js";
 export * from "./entities.js";
@@ -126,6 +128,8 @@ export interface GoogleSeedConfig {
   strict_scopes?: boolean;
   /** The Directory API's `customerId` of the account; generated when not set. */
   customer_id?: string;
+  /** The Alert Center's `UserChanges` rules that are on, by their Rules page names; all are off by default. */
+  alert_rules?: string[];
   users?: GoogleSeedUser[];
   oauth_clients?: Array<{
     client_id: string;
@@ -311,6 +315,7 @@ export function seedFromConfig(store: Store, _baseUrl: string, config: GoogleSee
   if (config.customer_id) {
     setCustomerId(store, config.customer_id);
   }
+  seedAlertRules(store, config.alert_rules);
 
   if (config.users) {
     for (const user of config.users) {
@@ -518,6 +523,7 @@ export const googlePlugin: ServicePlugin = {
     oauthRoutes(ctx);
     adminDirectoryRoutes(ctx);
     reportsRoutes(ctx);
+    alertCenterRoutes(ctx);
     calendarRoutes(ctx);
     driveRoutes(ctx);
     messageRoutes(ctx);
