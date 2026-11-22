@@ -72,6 +72,40 @@ export function recordLoginEvent(
   record(c, store, "login", user, [{ type: "login", name, parameters }]);
 }
 
+/**
+ * The `login_verification` ("A login verification was presented") that recorded activities pair with each SAML
+ * sign-in, as a separate activity at the same time: `login_type` and `login_challenge_method` `saml`,
+ * `login_challenge_status` `passed`, and `is_second_factor` without a value (a raw record of 2026-10; the reference
+ * shows the status as "Challenge Passed." in the Admin console's wording).
+ */
+export function recordSamlVerification(c: Context, store: Store, user: GoogleUser | undefined): void {
+  if (!inAccount(user)) return;
+  record(c, store, "login", user, [
+    {
+      type: "login",
+      name: "login_verification",
+      parameters: [
+        param("login_type", "saml"),
+        { name: "login_challenge_method", multiValue: ["saml"] },
+        param("login_challenge_status", "passed"),
+        { name: "is_second_factor" },
+      ],
+    },
+  ]);
+}
+
+/**
+ * A `logout` ("A user logged out"). Its login type is Google Password whatever the sign-in was ("the Login type for
+ * Logout events is displayed as Google Password", https://knowledge.workspace.google.com/admin/reports/user-log-events),
+ * and recorded logouts carry no other parameter.
+ */
+export function recordLogout(c: Context, store: Store, user: GoogleUser | undefined): void {
+  if (!inAccount(user)) return;
+  record(c, store, "login", user, [
+    { type: "login", name: "logout", parameters: [param("login_type", "google_password")] },
+  ]);
+}
+
 // Desktop apps redirect to the loopback interface (https://developers.google.com/identity/protocols/oauth2/native-app),
 // so a client whose redirect URIs are all there is `NATIVE_DESKTOP`, "A native Desktop application"; any other is `WEB`.
 function clientType(redirectUris: string[]): string {

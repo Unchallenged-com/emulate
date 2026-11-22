@@ -499,3 +499,22 @@ export function getWebSessionUser(store: Store, c: Context): GoogleUser | null {
   const user = getGoogleStore(store).users.findOneBy("email", session.email);
   return user && ssoProfileForUser(store, user)?.id === session.profile_id ? user : null;
 }
+
+/**
+ * Ends this browser's Google web session, if it has one: the session's user and profile, and the header that clears
+ * the cookie.
+ */
+export function closeWebSession(
+  store: Store,
+  c: Context,
+): { user: GoogleUser | null; profile: GoogleSsoProfile | null; cookie: string } {
+  const cookie = `${GOOGLE_SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`;
+  const sessionId = parseCookies(c.req.header("Cookie") ?? "")[GOOGLE_SESSION_COOKIE];
+  const sessions = dataMap<GoogleWebSession>(store, "google.sso.sessions");
+  const session = sessionId ? sessions.get(sessionId) : undefined;
+  if (!sessionId || !session) return { user: null, profile: null, cookie };
+  sessions.delete(sessionId);
+  if (Date.now() >= session.expires_at) return { user: null, profile: null, cookie };
+  const user = getGoogleStore(store).users.findOneBy("email", session.email) ?? null;
+  return { user, profile: getSsoProfile(store, session.profile_id) ?? null, cookie };
+}

@@ -715,8 +715,8 @@ describe("Google Workspace SAML single sign-on", () => {
       const res = await consume(app, buildResponse({ requestId }));
       expect(res.status).toBe(302);
       const recorded = await logins(app);
-      expect(recorded).toHaveLength(1);
-      expect(recorded[0]).toMatchObject({
+      expect(recorded).toHaveLength(2);
+      expect(recorded[1]).toMatchObject({
         actor: { email: "alice@acme.test" },
         events: [
           {
@@ -732,7 +732,65 @@ describe("Google Workspace SAML single sign-on", () => {
       });
 
       expectCode(await authorizeCallback(app, "alice@acme.test", sessionCookie(res)));
-      expect(await logins(app)).toHaveLength(1);
+      expect(await logins(app)).toHaveLength(2);
+    });
+
+    it("pairs each saml sign-in with a login_verification, as a separate activity at the same time", async () => {
+      const { app } = createTestApp();
+      await signInWithSaml(app);
+      const [verification, success] = (await logins(app)) as Array<Activity & { id: { time: string } }>;
+      expect(success.events[0].name).toBe("login_success");
+      expect(verification).toMatchObject({
+        actor: { email: "alice@acme.test" },
+        events: [
+          {
+            type: "login",
+            name: "login_verification",
+            parameters: [
+              { name: "login_type", value: "saml" },
+              { name: "login_challenge_method", multiValue: ["saml"] },
+              { name: "login_challenge_status", value: "passed" },
+              { name: "is_second_factor" },
+            ],
+          },
+        ],
+      });
+      expect(verification.events[0].parameters[3]).toEqual({ name: "is_second_factor" });
+      expect(verification.id.time).toBe(success.id.time);
+    });
+
+    it("records a logout when the browser signs out, and sends it to the profile's sign-out page", async () => {
+      const { app } = createTestApp([
+        {
+          id: "okta",
+          sign_in_page_url: idpUrl,
+          sign_out_page_url: "https://idp.example/signed-out",
+          certificates: [idpKey.certificate],
+          users: ["alice@acme.test"],
+        },
+      ]);
+      const { cookie } = await signInWithSaml(app);
+      const res = await app.request(`${base}/logout`, { headers: { Cookie: cookie } });
+      expect(res.status).toBe(302);
+      expect(res.headers.get("Location")).toBe("https://idp.example/signed-out");
+      expect(res.headers.get("Set-Cookie")).toContain("_emu_google_session=; Path=/; Max-Age=0");
+
+      const [logout] = await logins(app);
+      expect(logout).toMatchObject({
+        actor: { email: "alice@acme.test" },
+        events: [{ type: "login", name: "logout", parameters: [{ name: "login_type", value: "google_password" }] }],
+      });
+      // The session is over: the next authorization goes back to the identity provider.
+      const again = await authorizeCallback(app, "alice@acme.test", cookie);
+      expect(hiddenField(await again.text(), "SAMLRequest")).not.toBeNull();
+    });
+
+    it("records no logout for a browser without a session", async () => {
+      const { app } = createTestApp();
+      const res = await app.request(`${base}/logout`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toContain("signed out");
+      expect(await logins(app)).toEqual([]);
     });
 
     it("keeps password sign-ins of users without a profile as google_password", async () => {

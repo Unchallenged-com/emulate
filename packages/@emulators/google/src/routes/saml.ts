@@ -1,8 +1,9 @@
-import type { RouteContext } from "@emulators/core";
+import type { Context, RouteContext } from "@emulators/core";
 import { bodyStr, renderErrorPage, renderFormPostPage } from "@emulators/core";
-import { recordLoginEvent } from "../reports.js";
+import { recordLoginEvent, recordLogout, recordSamlVerification } from "../reports.js";
 import {
   SamlResponseError,
+  closeWebSession,
   consumeAssertionId,
   getSsoBrowserId,
   getSsoProfile,
@@ -49,6 +50,7 @@ export function samlRoutes({ app, store, baseUrl }: RouteContext): void {
       consumeAssertionId(store, assertion);
       c.header("Set-Cookie", openWebSession(store, assertion.user, profile));
       recordLoginEvent(c, store, assertion.user, "login_success", "saml");
+      recordSamlVerification(c, store, assertion.user);
       return c.redirect(request.continue_url, 302);
     } catch (error) {
       if (error instanceof SamlResponseError) {
@@ -56,5 +58,18 @@ export function samlRoutes({ app, store, baseUrl }: RouteContext): void {
       }
       throw error;
     }
+  });
+
+  // Signing out of Google: users "sign out and sign in again by going to https://accounts.google.com/logout"
+  // (https://knowledge.workspace.google.com/admin/apps/optional-sso-settings-and-maintenance), which ends the web
+  // session. The SSO profile's Sign-out page URL, "The page where the user lands after exiting the Google app or
+  // service" (https://knowledge.workspace.google.com/admin/apps/setting-up-sso), follows when it is set; otherwise
+  // the emulator shows that the user is signed out.
+  app.get("/logout", (c: Context) => {
+    const { user, profile, cookie } = closeWebSession(store, c);
+    c.header("Set-Cookie", cookie);
+    if (user) recordLogout(c, store, user);
+    if (profile?.sign_out_page_url) return c.redirect(profile.sign_out_page_url, 302);
+    return c.html(renderErrorPage("Signed out", "You are signed out of Google.", SERVICE_LABEL), 200);
   });
 }

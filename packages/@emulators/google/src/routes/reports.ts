@@ -119,7 +119,8 @@ function compare(actual: string, operator: string, expected: string): boolean {
 function parameterValues(parameter: GoogleActivityParameter): string[] {
   if ("multiValue" in parameter) return parameter.multiValue;
   if ("boolValue" in parameter) return [String(parameter.boolValue)];
-  return [parameter.value];
+  if ("value" in parameter) return [parameter.value];
+  return [];
 }
 
 /** "An empty report is returned if the request's parameter doesn't belong to the `eventName`." */
