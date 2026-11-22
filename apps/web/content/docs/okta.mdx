@@ -75,6 +75,24 @@ An app whose `credentials.oauthClient.client_id` names an OIDC client restricts 
 - `POST /api/v1/authorizationServers/:authServerId/lifecycle/activate` — activate
 - `POST /api/v1/authorizationServers/:authServerId/lifecycle/deactivate` — deactivate
 
+## Factors and passwords
+
+Users can be seeded with a `password` and with active `token:software:totp` factors (`factors`: `user_okta_id`, `provider` `GOOGLE` or `OKTA`, base32 `shared_secret`). Enrolling returns the shared secret; activating checks the six-digit TOTP code (30 second steps) and answers `403` with `E0000068` for a wrong one. Other factor types are refused with `400`. Factor changes are recorded in the System Log as `user.mfa.factor.activate` and `user.mfa.factor.deactivate`, one for each factor a reset removes, as Identity Engine records them.
+
+- `GET /api/v1/users/:userId/factors` — list enrolled factors
+- `POST /api/v1/users/:userId/factors` — enroll a `token:software:totp` factor
+- `GET /api/v1/users/:userId/factors/:factorId` — get a factor
+- `POST /api/v1/users/:userId/factors/:factorId/lifecycle/activate` — activate with `{ "passCode": "123456" }`
+- `DELETE /api/v1/users/:userId/factors/:factorId` — unenroll a factor
+- `POST /api/v1/users/:userId/lifecycle/reset_factors` — unenroll all factors
+
+Password operations move the user between `ACTIVE`, `RECOVERY`, `PASSWORD_EXPIRED` and `LOCKED_OUT`, and only `ACTIVE` users can sign in. `reset_password` and `expire_password` answer `403` with `E0000017` for a `STAGED`, `SUSPENDED` or `DEPROVISIONED` user. `reset_password` sends no email (it answers `{}`): with `sendEmail=false` it returns a `resetPasswordUrl`, which the emulator does not serve; the user leaves `RECOVERY` by changing their password. Passwords are not checked against a password policy. Changes are recorded as `user.account.reset_password`, `user.account.expire_password`, `user.account.unlock_by_admin` and `user.account.update_password`.
+
+- `POST /api/v1/users/:userId/lifecycle/reset_password` — reset a password (`sendEmail`, `revokeSessions`)
+- `POST /api/v1/users/:userId/lifecycle/expire_password` — expire a password
+- `POST /api/v1/users/:userId/lifecycle/unlock` — unlock a `LOCKED_OUT` user
+- `POST /api/v1/users/:userId/credentials/change_password` — change a password, checking the old one
+
 ## System Log
 
 The emulator records what users, administrators and clients do as Okta's System Log events (LogEvent records, with Okta's event types, actor, client address, targets, outcome and transaction):

@@ -30,6 +30,9 @@ export function normalizeStatus(status: string | undefined, fallback: OktaUserSt
     status === "STAGED" ||
     status === "PROVISIONED" ||
     status === "ACTIVE" ||
+    status === "RECOVERY" ||
+    status === "PASSWORD_EXPIRED" ||
+    status === "LOCKED_OUT" ||
     status === "SUSPENDED" ||
     status === "DEPROVISIONED"
   ) {

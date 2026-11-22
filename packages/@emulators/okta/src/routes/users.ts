@@ -3,6 +3,7 @@ import { boolFromQuery, generateOktaId, nowIso, userDisplayName } from "../helpe
 import { findUserByRef, oktaError, readJsonObject, requireManagementAuth, userResponse } from "../route-helpers.js";
 import { getOktaStore } from "../store.js";
 import { revokeUserOAuthTokens } from "./oauth.js";
+import { hashPassword } from "../credentials.js";
 import type { OktaUser, OktaUserStatus } from "../entities.js";
 import { groupTarget, recordManagementEvent, userEntity, type LogEventType } from "../system-log.js";
 
@@ -116,6 +117,10 @@ export function userRoutes({ app, store, baseUrl, tokenMap }: RouteContext): voi
     }
 
     const activate = boolFromQuery(c.req.query("activate"), true);
+    const credentials = (body.credentials && typeof body.credentials === "object" ? body.credentials : {}) as {
+      password?: { value?: unknown };
+    };
+    const password = typeof credentials.password?.value === "string" ? credentials.password.value : null;
     const now = nowIso();
     const firstName = typeof profile.firstName === "string" ? profile.firstName : "Test";
     const lastName = typeof profile.lastName === "string" ? profile.lastName : "User";
@@ -128,7 +133,8 @@ export function userRoutes({ app, store, baseUrl, tokenMap }: RouteContext): voi
       activated_at: activate ? now : null,
       status_changed_at: now,
       last_login_at: null,
-      password_changed_at: null,
+      password_changed_at: password ? now : null,
+      password_hash: password ? hashPassword(password) : null,
       transitioning_to_status: null,
       login,
       email,
@@ -140,6 +146,8 @@ export function userRoutes({ app, store, baseUrl, tokenMap }: RouteContext): voi
     });
 
     recordManagementEvent(store, c, auth, "user.lifecycle.create", [userEntity(created)]);
+    // A password set at creation is recorded as a password update.
+    if (password) recordManagementEvent(store, c, auth, "user.account.update_password", [userEntity(created)]);
     if (activate) recordManagementEvent(store, c, auth, "user.lifecycle.activate", [userEntity(created)]);
     return c.json(userResponse(baseUrl, created), 201);
   });
@@ -274,6 +282,9 @@ export function userRoutes({ app, store, baseUrl, tokenMap }: RouteContext): voi
     }
     for (const assignment of oktaStore.appAssignments.findBy("user_okta_id", user.okta_id)) {
       oktaStore.appAssignments.delete(assignment.id);
+    }
+    for (const factor of oktaStore.factors.findBy("user_okta_id", user.okta_id)) {
+      oktaStore.factors.delete(factor.id);
     }
 
     oktaStore.users.delete(user.id);

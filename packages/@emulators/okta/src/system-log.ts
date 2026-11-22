@@ -60,6 +60,21 @@ export interface LogEvent {
 const EVENT_TYPES = {
   "user.session.start": { displayMessage: "User login to Okta", legacy: "core.user_auth.login_success" },
   "user.session.clear": { displayMessage: "Clear user session", legacy: null },
+  "user.mfa.factor.activate": { displayMessage: "Activate factor for user", legacy: "core.user.factor.activate" },
+  "user.mfa.factor.deactivate": { displayMessage: "Reset factor for user", legacy: "core.user.factor.deactivate" },
+  "user.account.reset_password": {
+    displayMessage: "Fired when the user's Okta password is reset",
+    legacy: "core.user.config.user_status.password_reset",
+  },
+  "user.account.update_password": {
+    displayMessage: "User update password for Okta",
+    legacy: "core.user.config.password_update.success",
+  },
+  "user.account.expire_password": { displayMessage: "Fired when the user's Okta password is expired", legacy: null },
+  "user.account.unlock_by_admin": {
+    displayMessage: "User account unlock by admin",
+    legacy: "core.user_auth.account_unlocked_by_admin",
+  },
   "user.session.end": { displayMessage: "User logout from Okta", legacy: "core.user_auth.logout_success" },
   "app.generic.unauth_app_access_attempt": {
     displayMessage: "User attempted unauthorized access to app",
@@ -313,6 +328,7 @@ export function recordManagementEvent(
   eventType: LogEventType,
   target: LogTarget[],
   debugData?: Record<string, unknown>,
+  outcome?: { result: "SUCCESS" | "FAILURE"; reason?: string | null },
 ): void {
   const okta = getOktaStore(store);
   const authorization = c.req.header("Authorization") ?? "";
@@ -348,6 +364,7 @@ export function recordManagementEvent(
     externalSessionId: managementSessionId(c),
     transactionDetail,
     debugData,
+    outcome,
   });
 }
 

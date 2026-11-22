@@ -1,7 +1,15 @@
 import type { Entity } from "@emulators/core";
 import type { LogEvent } from "./system-log.js";
 
-export type OktaUserStatus = "STAGED" | "PROVISIONED" | "ACTIVE" | "SUSPENDED" | "DEPROVISIONED";
+export type OktaUserStatus =
+  | "STAGED"
+  | "PROVISIONED"
+  | "ACTIVE"
+  | "RECOVERY"
+  | "PASSWORD_EXPIRED"
+  | "LOCKED_OUT"
+  | "SUSPENDED"
+  | "DEPROVISIONED";
 
 export interface OktaUser extends Entity {
   okta_id: string;
@@ -10,6 +18,8 @@ export interface OktaUser extends Entity {
   status_changed_at: string;
   last_login_at: string | null;
   password_changed_at: string | null;
+  /** The user's Okta password, as a salted scrypt hash; absent when the user has none. */
+  password_hash?: string | null;
   transitioning_to_status: OktaUserStatus | null;
   login: string;
   email: string;
@@ -77,4 +87,15 @@ export interface OktaLogEventEntry extends Entity {
   uuid: string;
   published: string;
   event: LogEvent;
+}
+
+/** An enrolled factor (`token:software:totp` only). */
+export interface OktaFactor extends Entity {
+  factor_id: string;
+  user_okta_id: string;
+  factor_type: string;
+  provider: string;
+  status: "PENDING_ACTIVATION" | "ACTIVE";
+  /** The TOTP shared secret, base32. */
+  shared_secret: string;
 }

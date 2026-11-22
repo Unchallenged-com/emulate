@@ -18,6 +18,9 @@ import { appRoutes } from "./routes/apps.js";
 import { authorizationServerRoutes } from "./routes/auth-servers.js";
 import { groupRoutes } from "./routes/groups.js";
 import { logRoutes } from "./routes/logs.js";
+import { factorRoutes } from "./routes/factors.js";
+import { credentialRoutes } from "./routes/credentials.js";
+import { hashPassword } from "./credentials.js";
 import { oauthRoutes } from "./routes/oauth.js";
 import { userRoutes } from "./routes/users.js";
 import { oktaError } from "./route-helpers.js";
@@ -38,6 +41,15 @@ export interface OktaSeedConfig {
     display_name?: string;
     locale?: string;
     time_zone?: string;
+    /** The user's Okta password. */
+    password?: string;
+  }>;
+  /** Enrolled `token:software:totp` factors, with their base32 shared secret. */
+  factors?: Array<{
+    user_okta_id: string;
+    provider?: "GOOGLE" | "OKTA";
+    shared_secret: string;
+    okta_id?: string;
   }>;
   groups?: Array<{
     okta_id?: string;
@@ -188,7 +200,8 @@ export function seedFromConfig(store: Store, _baseUrl: string, config: OktaSeedC
         activated_at: resolvedStatus === "ACTIVE" ? new Date().toISOString() : null,
         status_changed_at: new Date().toISOString(),
         last_login_at: null,
-        password_changed_at: null,
+        password_changed_at: user.password ? new Date().toISOString() : null,
+        password_hash: user.password ? hashPassword(user.password) : null,
         transitioning_to_status: null,
         login: user.login,
         email: user.email ?? user.login,
@@ -257,6 +270,25 @@ export function seedFromConfig(store: Store, _baseUrl: string, config: OktaSeedC
     }
   }
 
+  if (config.factors) {
+    for (const factor of config.factors) {
+      if (!okta.users.findOneBy("okta_id", factor.user_okta_id)) continue;
+      const provider = factor.provider ?? "GOOGLE";
+      const enrolled = okta.factors
+        .findBy("user_okta_id", factor.user_okta_id)
+        .some((entry) => entry.factor_type === "token:software:totp" && entry.provider === provider);
+      if (enrolled) continue;
+      okta.factors.insert({
+        factor_id: factor.okta_id ?? generateOktaId("ost"),
+        user_okta_id: factor.user_okta_id,
+        factor_type: "token:software:totp",
+        provider,
+        status: "ACTIVE",
+        shared_secret: factor.shared_secret,
+      });
+    }
+  }
+
   if (config.app_assignments) {
     for (const assignment of config.app_assignments) {
       const app = okta.apps.findOneBy("okta_id", assignment.app_okta_id);
@@ -295,6 +327,8 @@ export const oktaPlugin: ServicePlugin = {
     appRoutes(ctx);
     authorizationServerRoutes(ctx);
     logRoutes(ctx);
+    factorRoutes(ctx);
+    credentialRoutes(ctx);
   },
   seed(store: Store, baseUrl: string): void {
     seedDefaults(store, baseUrl);
