@@ -72,6 +72,20 @@ Default org server and custom authorization server paths (`/oauth2/:authServerId
 - `POST /api/v1/authorizationServers/:authServerId/lifecycle/activate` — activate
 - `POST /api/v1/authorizationServers/:authServerId/lifecycle/deactivate` — deactivate
 
+### Event hooks and log streams
+
+Event hooks are created `ACTIVE` and `UNVERIFIED`. Verifying one sends Okta's one-time `GET` with an `x-okta-verification-challenge` header, which the endpoint must echo as `{"verification": "..."}`; an active, verified hook then receives the event-hook-eligible events it subscribes to, batched, as `POST` requests in Okta's `com.okta.event_hook` envelope with its headers and authentication header. Requests time out after 3 seconds and are retried once (deliveries only on timeouts and `5xx` answers); a failed delivery is recorded as `event_hook.delivery`. Okta requires HTTPS endpoints; the emulator also accepts `http://` on the loopback interface. Changing a hook's channel requires a new verification, and only inactive hooks can be deleted.
+
+- `GET`, `POST /api/v1/eventHooks` — list, create event hooks
+- `GET`, `PUT`, `DELETE /api/v1/eventHooks/:eventHookId` — get, replace, delete an event hook
+- `POST /api/v1/eventHooks/:eventHookId/lifecycle/activate`, `deactivate` and `verify`
+
+Log streams (`aws_eventbridge`, `splunk_cloud_logstreaming`) are stored with Okta's settings checks and recorded as `system.log_stream.lifecycle.*`; the emulator does not send events to AWS EventBridge or Splunk Cloud. The Splunk HEC token is never returned.
+
+- `GET`, `POST /api/v1/logStreams` — list, create log streams
+- `GET`, `PUT`, `DELETE /api/v1/logStreams/:logStreamId` — get, replace, delete a log stream
+- `POST /api/v1/logStreams/:logStreamId/lifecycle/activate` and `deactivate`
+
 ### System Log
 
 The emulator records what users, administrators and clients do as Okta's System Log events (LogEvent records, with Okta's event types, actor, client address, targets, outcome and transaction):

@@ -47,7 +47,7 @@ export interface LogEvent {
   severity: "DEBUG" | "INFO" | "WARN" | "ERROR";
   debugContext: { debugData: Record<string, unknown> };
   legacyEventType: string | null;
-  transaction: { type: "WEB"; id: string; detail: Record<string, unknown> };
+  transaction: { type: "WEB" | "JOB"; id: string; detail: Record<string, unknown> };
   uuid: string;
   version: "0";
   request: { ipChain: Array<{ ip: string; geographicalContext: null; version: "V4" | "V6"; source: null }> };
@@ -60,6 +60,54 @@ export interface LogEvent {
 const EVENT_TYPES = {
   "user.session.start": { displayMessage: "User login to Okta", legacy: "core.user_auth.login_success" },
   "user.session.clear": { displayMessage: "Clear user session", legacy: null },
+  "event_hook.created": {
+    displayMessage: "Triggered when an event hook has been created",
+    legacy: "platform.event_hook.created",
+  },
+  "event_hook.updated": {
+    displayMessage: "Triggered when an event hook has been updated",
+    legacy: "platform.event_hook.updated",
+  },
+  "event_hook.activated": {
+    displayMessage: "Triggered when an event hook has been activated",
+    legacy: "platform.event_hook.activated",
+  },
+  "event_hook.deactivated": {
+    displayMessage: "Triggered when an event hook has been deactivated",
+    legacy: "platform.event_hook.deactivated",
+  },
+  "event_hook.deleted": {
+    displayMessage: "Triggered when an event hook has been deleted",
+    legacy: "platform.event_hook.deleted",
+  },
+  "event_hook.verified": {
+    displayMessage: "Triggered when attempting to verify an event hook",
+    legacy: { SUCCESS: "platform.event_hook.verified.success", FAILURE: "platform.event_hook.verified.failure" },
+  },
+  "event_hook.delivery": {
+    displayMessage: "Event Hook Delivery Failed",
+    legacy: "platform.event_hook.delivered.failure",
+  },
+  "system.log_stream.lifecycle.create": {
+    displayMessage: "Log stream created",
+    legacy: "system.log_stream.lifecycle.create",
+  },
+  "system.log_stream.lifecycle.update": {
+    displayMessage: "Log stream updated",
+    legacy: "system.log_stream.lifecycle.update",
+  },
+  "system.log_stream.lifecycle.activate": {
+    displayMessage: "Log stream activated",
+    legacy: "system.log_stream.lifecycle.activate",
+  },
+  "system.log_stream.lifecycle.deactivate": {
+    displayMessage: "Log stream deactivated",
+    legacy: "system.log_stream.lifecycle.deactivate",
+  },
+  "system.log_stream.lifecycle.delete": {
+    displayMessage: "Log stream deleted",
+    legacy: "system.log_stream.lifecycle.delete",
+  },
   "user.session.end": { displayMessage: "User logout from Okta", legacy: "core.user_auth.logout_success" },
   "app.generic.unauth_app_access_attempt": {
     displayMessage: "User attempted unauthorized access to app",
@@ -214,12 +262,29 @@ function deviceOf(ua: string, browser: string): string {
 }
 
 /** Records one System Log event for the request being handled. */
-export function recordLogEvent(store: Store, c: Context<AppEnv>, input: LogEventInput): LogEvent {
+// Some legacy types depend on the outcome.
+function legacyOf(legacy: string | null | { SUCCESS: string; FAILURE: string }, result: string): string | null {
+  if (legacy === null || typeof legacy === "string") return legacy;
+  return result === "FAILURE" ? legacy.FAILURE : legacy.SUCCESS;
+}
+
+// Listeners told of each event recorded in a store, such as event hook delivery.
+const logListeners = new WeakMap<Store, Array<(event: LogEvent) => void>>();
+
+export function onLogEvent(store: Store, listener: (event: LogEvent) => void): void {
+  logListeners.set(store, [...(logListeners.get(store) ?? []), listener]);
+}
+
+/**
+ * Records one System Log event for the request being handled, or, with no request (`c` null), for work Okta does
+ * on its own, recorded as a JOB.
+ */
+export function recordLogEvent(store: Store, c: Context<AppEnv> | null, input: LogEventInput): LogEvent {
   const known = EVENT_TYPES[input.eventType];
-  const requestId = requestIdOf(c);
-  const ip = clientAddress(c.req.raw) ?? null;
-  const url = new URL(c.req.url);
-  const rawUserAgent = c.req.header("User-Agent");
+  const requestId = c ? requestIdOf(c) : randomBytes(16).toString("hex");
+  const ip = c ? (clientAddress(c.req.raw) ?? null) : null;
+  const url = c ? new URL(c.req.url) : null;
+  const rawUserAgent = c?.req.header("User-Agent");
   const browser = rawUserAgent ? browserOf(rawUserAgent) : "UNKNOWN";
 
   const transactionDetail: Record<string, unknown> = { ...input.transactionDetail };
@@ -254,10 +319,12 @@ export function recordLogEvent(store: Store, c: Context<AppEnv>, input: LogEvent
     securityContext: { asNumber: null, asOrg: null, isp: null, domain: null, isProxy: null },
     severity: input.severity ?? "INFO",
     debugContext: {
-      debugData: { requestId, requestUri: url.pathname, url: `${url.pathname}${url.search}`, ...input.debugData },
+      debugData: url
+        ? { requestId, requestUri: url.pathname, url: `${url.pathname}${url.search}`, ...input.debugData }
+        : { requestId, ...input.debugData },
     },
-    legacyEventType: known.legacy,
-    transaction: { type: "WEB", id: requestId, detail: transactionDetail },
+    legacyEventType: legacyOf(known.legacy, input.outcome?.result ?? "SUCCESS"),
+    transaction: { type: c ? "WEB" : "JOB", id: requestId, detail: transactionDetail },
     uuid: randomUUID(),
     version: "0",
     request: {
@@ -267,8 +334,18 @@ export function recordLogEvent(store: Store, c: Context<AppEnv>, input: LogEvent
   };
 
   getOktaStore(store).logEvents.insert({ uuid: event.uuid, published: event.published, event });
+  for (const listener of logListeners.get(store) ?? []) listener(event);
   return event;
 }
+
+/** The actor of what Okta does on its own. */
+export const SYSTEM_PRINCIPAL: LogActor = {
+  id: "spr_emulate_system",
+  type: "SystemPrincipal",
+  alternateId: "system@okta.com",
+  displayName: "Okta System",
+  detailEntry: null,
+};
 
 export function userEntity(user: OktaUser): LogActor {
   return {
@@ -313,6 +390,7 @@ export function recordManagementEvent(
   eventType: LogEventType,
   target: LogTarget[],
   debugData?: Record<string, unknown>,
+  outcome?: { result: "SUCCESS" | "FAILURE"; reason?: string | null },
 ): void {
   const okta = getOktaStore(store);
   const authorization = c.req.header("Authorization") ?? "";
@@ -348,6 +426,7 @@ export function recordManagementEvent(
     externalSessionId: managementSessionId(c),
     transactionDetail,
     debugData,
+    outcome,
   });
 }
 

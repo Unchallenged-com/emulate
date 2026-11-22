@@ -78,3 +78,27 @@ export interface OktaLogEventEntry extends Entity {
   published: string;
   event: LogEvent;
 }
+
+/** An event hook; `auth_value` is the secret of its authentication header, never returned. */
+export interface OktaEventHook extends Entity {
+  hook_id: string;
+  name: string;
+  description: string | null;
+  status: "ACTIVE" | "INACTIVE";
+  verification_status: "UNVERIFIED" | "VERIFIED";
+  created_by: string | null;
+  event_types: string[];
+  uri: string;
+  headers: Array<{ key: string; value: string }>;
+  auth_key: string | null;
+  auth_value: string | null;
+}
+
+/** A log stream; `settings` holds the type's write-only values too (the Splunk HEC token), never returned. */
+export interface OktaLogStream extends Entity {
+  stream_id: string;
+  type: "aws_eventbridge" | "splunk_cloud_logstreaming";
+  name: string;
+  status: "ACTIVE" | "INACTIVE";
+  settings: Record<string, string>;
+}
