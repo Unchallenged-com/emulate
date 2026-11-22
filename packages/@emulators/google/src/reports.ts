@@ -5,6 +5,7 @@ import type {
   GoogleActivity,
   GoogleActivityEvent,
   GoogleActivityParameter,
+  GoogleActivityResource,
   GoogleDriveItem,
   GoogleUser,
 } from "./entities.js";
@@ -37,6 +38,7 @@ function record(
   actor: GoogleUser,
   events: GoogleActivityEvent[],
   oauthClientId: string | null = null,
+  resources: GoogleActivityResource[] = [],
 ): void {
   const gs = getGoogleStore(store);
   const client = oauthClientId ? gs.oauthClients.findOneBy("client_id", oauthClientId) : undefined;
@@ -50,7 +52,9 @@ function record(
     actor_oauth_client_id: oauthClientId,
     actor_application_name: oauthClientId ? (client?.name ?? null) : null,
     ip_address: clientAddress(c.req.raw) ?? null,
-    events,
+    events:
+      resources.length > 0 ? events.map((event) => ({ ...event, resourceIds: resources.map((r) => r.id) })) : events,
+    ...(resources.length > 0 ? { resource_details: resources } : {}),
   });
 }
 
@@ -179,6 +183,10 @@ const DOC_TYPES: Record<string, string> = {
  * activities (third-party parser test records of 2023 to 2025), values from the Drive events reference: the emulator
  * has no sharing, so every item is `private` and owned by its user. `originating_app_id`, "the Google Cloud project
  * number of the app", is left out: the emulator's clients have none. Event-specific parameters follow `visibility`.
+ * The item is the activity's resource, as recent recorded Drive activities name it: in `resourceDetails`, `type`
+ * `DRIVE_ITEM` with its title and `relation` `DRIVE_PRIMARY`, and its ID in the event's `resourceIds`; an item owned
+ * by a user carries no `ownerDetails` there (third-party parser test records of 2025 and 2026; the Reports discovery
+ * document's `ResourceDetails`).
  */
 export function recordDriveEvent(
   c: Context,
@@ -190,31 +198,39 @@ export function recordDriveEvent(
   const email = getAuthenticatedEmail(c);
   const actor = email ? getGoogleStore(store).users.findOneBy("email", email) : undefined;
   if (!inAccount(actor)) return;
-  record(c, store, "drive", actor, [
-    {
-      type: "access",
-      name,
-      parameters: [
-        { name: "primary_event", boolValue: true },
-        { name: "billable", boolValue: true },
-        { name: "owner_is_shared_drive", boolValue: false },
-        param("owner", item.user_email),
-        param("doc_id", item.google_id),
-        param(
-          "doc_type",
-          item.mime_type.startsWith("video/")
-            ? (DOC_TYPES[item.mime_type] ?? "video")
-            : (DOC_TYPES[item.mime_type] ?? "unknown"),
-        ),
-        { name: "is_encrypted", boolValue: false },
-        param("doc_title", item.name),
-        param("visibility", "private"),
-        ...specific,
-        { name: "actor_is_collaborator_account", boolValue: false },
-        { name: "owner_is_team_drive", boolValue: false },
-      ],
-    },
-  ]);
+  record(
+    c,
+    store,
+    "drive",
+    actor,
+    [
+      {
+        type: "access",
+        name,
+        parameters: [
+          { name: "primary_event", boolValue: true },
+          { name: "billable", boolValue: true },
+          { name: "owner_is_shared_drive", boolValue: false },
+          param("owner", item.user_email),
+          param("doc_id", item.google_id),
+          param(
+            "doc_type",
+            item.mime_type.startsWith("video/")
+              ? (DOC_TYPES[item.mime_type] ?? "video")
+              : (DOC_TYPES[item.mime_type] ?? "unknown"),
+          ),
+          { name: "is_encrypted", boolValue: false },
+          param("doc_title", item.name),
+          param("visibility", "private"),
+          ...specific,
+          { name: "actor_is_collaborator_account", boolValue: false },
+          { name: "owner_is_team_drive", boolValue: false },
+        ],
+      },
+    ],
+    null,
+    [{ id: item.google_id, title: item.name, type: "DRIVE_ITEM", relation: "DRIVE_PRIMARY" }],
+  );
 }
 
 /** An activity as the Reports API returns it. */
@@ -244,6 +260,7 @@ export function activityResource(store: Store, activity: GoogleActivity): Record
     },
     ...(activity.ip_address ? { ipAddress: activity.ip_address } : {}),
     events: activity.events,
+    ...(activity.resource_details ? { resourceDetails: activity.resource_details } : {}),
   };
   return { ...resource, etag: etagOf(resource) };
 }

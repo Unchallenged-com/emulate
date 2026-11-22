@@ -133,7 +133,7 @@ describe("Google Reports API Drive events", () => {
     const [activity] = await report();
     expect(activity.actor).toEqual({ email: staff, profileId: expect.any(String) });
     expect(activity.ipAddress).toBe(staffIp);
-    expect(activity.events[0]).toEqual({
+    expect(activity.events[0]).toMatchObject({
       type: "access",
       name: "upload",
       parameters: [
@@ -150,6 +150,10 @@ describe("Google Reports API Drive events", () => {
         { name: "owner_is_team_drive", boolValue: false },
       ],
     });
+    expect((activity.events[0] as { resourceIds?: string[] }).resourceIds).toEqual([id]);
+    expect((activity as Activity & { resourceDetails?: unknown }).resourceDetails).toEqual([
+      { id, title: "invoice.pdf", type: "DRIVE_ITEM", relation: "DRIVE_PRIMARY" },
+    ]);
   });
 
   it("records creations, content reads by the application, renames and moves", async () => {
