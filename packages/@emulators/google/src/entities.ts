@@ -63,6 +63,25 @@ export interface GoogleActivity extends Entity {
   events: GoogleActivityEvent[];
 }
 
+/** A push notification channel of the Reports API (`activities.watch`) and what it watches. */
+export interface GoogleReportsChannel extends Entity {
+  channel_id: string;
+  resource_id: string;
+  resource_uri: string;
+  address: string;
+  token: string | null;
+  /** Unix time in milliseconds. */
+  expiration: number;
+  application_name: string;
+  user_profile_id: string | null;
+  event_name: string | null;
+  filters: string | null;
+  actor_ip_address: string | null;
+  creator_email: string;
+  creator_client_id: string | null;
+  message_number: number;
+}
+
 export interface GoogleOAuthClient extends Entity {
   client_id: string;
   client_secret: string;

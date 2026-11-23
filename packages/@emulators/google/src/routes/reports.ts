@@ -7,10 +7,18 @@ import {
   requireSuperAdmin,
   selectFields,
 } from "../directory.js";
-import type { GoogleActivity, GoogleActivityParameter } from "../entities.js";
-import { googleApiError } from "../helpers.js";
-import { activityResource } from "../reports.js";
+import type { GoogleActivity, GoogleActivityParameter, GoogleReportsChannel } from "../entities.js";
+import { getAuthenticatedEmail, googleApiError } from "../helpers.js";
+import { activityResource, requestClientId } from "../reports.js";
 import { buildReportsDiscoveryDocument } from "../reports-discovery.js";
+import {
+  MAX_CHANNEL_LIFETIME_MS,
+  channelResource,
+  channelResourceId,
+  sendSync,
+  startChannelDelivery,
+} from "../reports-push.js";
+import { parseGoogleBody } from "../route-helpers.js";
 import { getGoogleStore } from "../store.js";
 
 const PREFIX = "/admin/reports/v1";
@@ -60,6 +68,32 @@ const APPLICATIONS = new Set([
   "vault",
   "voice",
   "workspace_studio",
+]);
+
+// The applications activities.watch accepts, from its own `applicationName` pattern in the discovery document.
+const WATCH_APPLICATIONS = new Set([
+  "access_transparency",
+  "admin",
+  "calendar",
+  "chat",
+  "chrome",
+  "classroom",
+  "context_aware_access",
+  "data_studio",
+  "drive",
+  "gcp",
+  "gplus",
+  "groups",
+  "groups_enterprise",
+  "jamboard",
+  "keep",
+  "login",
+  "meet",
+  "mobile",
+  "rules",
+  "saml",
+  "token",
+  "user_accounts",
 ]);
 
 // The list parameters the emulator does not model: organizational units, group filtering, and the filters on fields
@@ -131,6 +165,49 @@ function satisfies(parameters: GoogleActivityParameter[], condition: Condition):
     : values.some((v) => compare(v, condition.operator, condition.value));
 }
 
+/** What a list or watch request selects, beside its application and time range. */
+type ActivityQuery = {
+  userProfileId: string | null;
+  eventName: string | null;
+  conditions: Condition[];
+  actorIp: string | null;
+};
+
+function matchesQuery(activity: GoogleActivity, query: ActivityQuery): boolean {
+  if (query.userProfileId && activity.actor_profile_id !== query.userProfileId) return false;
+  if (query.actorIp && activity.ip_address !== query.actorIp) return false;
+  // "When retrieving by eventName, the API retrieves the activities where this event occurred. For each activity, the
+  // response includes all of the activity's events including the event specified."
+  const events = activity.events.filter((event) => !query.eventName || event.name === query.eventName);
+  return events.some((event) => query.conditions.every((condition) => satisfies(event.parameters, condition)));
+}
+
+const channelQuery = (channel: GoogleReportsChannel): ActivityQuery => ({
+  userProfileId: channel.user_profile_id,
+  eventName: channel.event_name,
+  conditions: parseFilters(channel.filters ?? ""),
+  actorIp: channel.actor_ip_address,
+});
+
+// "This is your webhook callback URL, and it must use HTTPS." The emulator also accepts plain HTTP on the loopback
+// interface, so local tests can receive notifications.
+function acceptableAddress(value: string): boolean {
+  if (!URL.canParse(value)) return false;
+  const url = new URL(value);
+  if (url.protocol === "https:") return true;
+  return url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+}
+
+// Google's answer to a watch request whose address is not HTTPS, as a real Drive files.watch answer shows it (Google
+// documents no Reports-specific one; channels are shared by Google's push notifications).
+function webhookUrlInvalid(c: Context): Response {
+  const message = "Invalid webhook URL. Must be a valid URL starting with https";
+  return c.json(
+    { error: { errors: [{ domain: "push", reason: "push.webhookUrlInvalid", message }], code: 400, message } },
+    400,
+  );
+}
+
 // Page tokens hold the position of the last activity returned, so new activities do not shift the next page.
 function pageToken(activity: GoogleActivity): string {
   return Buffer.from(`${activity.time}|${activity.id}`).toString("base64url");
@@ -148,16 +225,12 @@ export function reportsRoutes({ app, store, baseUrl }: RouteContext): void {
   const gs = getGoogleStore(store);
   const badRequest = (c: Context, message: string) => googleApiError(c, 400, message, "badRequest", "INVALID_ARGUMENT");
   const invalid = (c: Context, message: string) => googleApiError(c, 400, message, "invalid", "INVALID_ARGUMENT");
+  startChannelDelivery(store, (activity, channel) => matchesQuery(activity, channelQuery(channel)));
 
-  app.get("/discovery/v1/apis/admin/reports_v1/rest", (c) => c.json(buildReportsDiscoveryDocument(baseUrl)));
-
-  // activities.list (https://developers.google.com/workspace/admin/reports/reference/rest/v1/activities/list).
-  app.get(`${PREFIX}/activity/users/:userKey/applications/:applicationName`, (c) => {
-    const admin = requireSuperAdmin(c, store);
-    if (admin instanceof Response) return admin;
-
+  /** The selection both list and watch read from their path and query, or the error that refuses it. */
+  const readQuery = (c: Context, applications: Set<string>): (ActivityQuery & { userKey: string }) | Response => {
     const application = c.req.param("applicationName") ?? "";
-    if (!APPLICATIONS.has(application)) return invalid(c, `Invalid Input: applicationName`);
+    if (!applications.has(application)) return invalid(c, `Invalid Input: applicationName`);
     const unsupported = UNSUPPORTED.find((name) => c.req.query(name) !== undefined);
     if (unsupported) return badRequest(c, `Invalid Input: ${unsupported} is not supported by the emulator`);
 
@@ -171,6 +244,24 @@ export function reportsRoutes({ app, store, baseUrl }: RouteContext): void {
     const userKey = c.req.param("userKey") ?? "";
     const user = userKey === "all" ? undefined : findUserByKey(gs, userKey);
     if (userKey !== "all" && !user) return badRequest(c, "Bad Request");
+
+    return {
+      userKey,
+      userProfileId: user?.uid ?? null,
+      eventName: c.req.query("eventName") || null,
+      conditions: parseFilters(c.req.query("filters") ?? ""),
+      actorIp: c.req.query("actorIpAddress") || null,
+    };
+  };
+
+  app.get("/discovery/v1/apis/admin/reports_v1/rest", (c) => c.json(buildReportsDiscoveryDocument(baseUrl)));
+
+  // activities.list (https://developers.google.com/workspace/admin/reports/reference/rest/v1/activities/list).
+  app.get(`${PREFIX}/activity/users/:userKey/applications/:applicationName`, (c) => {
+    const admin = requireSuperAdmin(c, store);
+    if (admin instanceof Response) return admin;
+    const query = readQuery(c, APPLICATIONS);
+    if (query instanceof Response) return query;
 
     // "The `startTime` must be before the `endTime` (if specified) and the current time when the request is made, or
     // the API returns an error."
@@ -188,30 +279,25 @@ export function reportsRoutes({ app, store, baseUrl }: RouteContext): void {
     const after = c.req.query("pageToken") ? readPageToken(c.req.query("pageToken")!) : null;
     if (c.req.query("pageToken") && !after) return invalid(c, "Invalid Input: pageToken");
 
-    const eventName = c.req.query("eventName");
-    const conditions = parseFilters(c.req.query("filters") ?? "");
-    const actorIp = c.req.query("actorIpAddress");
     // "Used to filter on the `oAuthClientId` field present in `ApplicationInfo` message", written
-    // `applicationInfoFilter=oAuthClientId="clientId"`. Google does not document other forms; the emulator refuses them.
+    // `applicationInfoFilter=oAuthClientId="clientId"`, with the spaces around the operator that AIP-160 filters allow
+    // (https://google.aip.dev/160). Other forms are "non-compliant", answered `INVALID_ARGUMENT`.
     const applicationFilter = c.req.query("applicationInfoFilter");
     const oauthClientId =
-      applicationFilter === undefined ? undefined : /^oAuthClientId="([^"]*)"$/.exec(applicationFilter.trim())?.[1];
+      applicationFilter === undefined
+        ? undefined
+        : /^oAuthClientId\s*=\s*"([^"]*)"$/.exec(applicationFilter.trim())?.[1];
     if (applicationFilter !== undefined && oauthClientId === undefined) {
       return invalid(c, "Invalid Input: applicationInfoFilter");
     }
 
     const matching = gs.activities
-      .findBy("application_name", application)
+      .findBy("application_name", c.req.param("applicationName") ?? "")
       .filter((activity) => {
         const time = Date.parse(activity.time);
         if (time < start || time > end) return false;
-        if (user && activity.actor_profile_id !== user.uid) return false;
-        if (actorIp && activity.ip_address !== actorIp) return false;
         if (oauthClientId !== undefined && activity.actor_oauth_client_id !== oauthClientId) return false;
-        // "When retrieving by eventName, the API retrieves the activities where this event occurred. For each
-        // activity, the response includes all of the activity's events including the event specified."
-        const events = activity.events.filter((event) => !eventName || event.name === eventName);
-        return events.some((event) => conditions.every((condition) => satisfies(event.parameters, condition)));
+        return matchesQuery(activity, query);
       })
       .sort(newestFirst)
       .filter((activity) => !after || newestFirst(activity, { time: after.time, id: after.id } as GoogleActivity) > 0);
@@ -224,5 +310,80 @@ export function reportsRoutes({ app, store, baseUrl }: RouteContext): void {
     };
     const body = { ...resource, etag: etagOf(resource) };
     return c.json(selectFields(body, parseFieldSelector(c.req.query("fields") ?? "")));
+  });
+
+  // activities.watch (https://developers.google.com/workspace/admin/reports/reference/rest/v1/activities/watch): "You
+  // can use the userKey, applicationName, eventName, and filters parameters to only receive notifications for
+  // specific events, users, or applications."
+  app.post(`${PREFIX}/activity/users/:userKey/applications/:applicationName/watch`, async (c) => {
+    const admin = requireSuperAdmin(c, store);
+    if (admin instanceof Response) return admin;
+    const query = readQuery(c, WATCH_APPLICATIONS);
+    if (query instanceof Response) return query;
+
+    const body = await parseGoogleBody(c);
+    const id = typeof body.id === "string" ? body.id : "";
+    const address = typeof body.address === "string" ? body.address : "";
+    // "With each watch request, you must provide these fields": `id`, `type` set to `web_hook`, and `address`. Google
+    // does not document the answer to a missing one; the emulator answers `badRequest`.
+    if (!id || body.type !== "web_hook" || !address) return badRequest(c, "Bad Request");
+    if (!acceptableAddress(address)) return webhookUrlInvalid(c);
+
+    // A channel's expiration is "determined either by your request or by any Admin SDK API internal limits or
+    // defaults (the more restrictive value is used)".
+    const now = Date.now();
+    const requested = Number(body.expiration);
+    const limit = now + MAX_CHANNEL_LIFETIME_MS;
+    // An expiration already past is accepted, as Google does not document its answer: the channel sends only its sync.
+    const expiration = body.expiration !== undefined && Number.isFinite(requested) ? Math.min(requested, limit) : limit;
+
+    const application = c.req.param("applicationName") ?? "";
+    // The guide's notification example: https://admin.googleapis.com/admin/reports/v1/activity/users/all/applications/admin?alt=json
+    const resourceUri = `${baseUrl.replace(/\/$/, "")}${PREFIX}/activity/users/${encodeURIComponent(query.userKey)}/applications/${application}?alt=json`;
+    // The `id` should be unique "within your project"; Google does not document the answer to a reused one, and the
+    // emulator accepts it (channels.stop also matches the `resourceId`).
+    const channel = gs.reportsChannels.insert({
+      channel_id: id,
+      resource_id: channelResourceId(resourceUri),
+      resource_uri: resourceUri,
+      address,
+      token: typeof body.token === "string" ? body.token : null,
+      expiration,
+      application_name: application,
+      user_profile_id: query.userProfileId,
+      event_name: query.eventName,
+      filters: c.req.query("filters") ?? null,
+      actor_ip_address: query.actorIp,
+      creator_email: getAuthenticatedEmail(c) ?? admin.email,
+      creator_client_id: requestClientId(c, store),
+      message_number: 1,
+    });
+    sendSync(channel);
+    return c.json(channelResource(channel));
+  });
+
+  // channels.stop (https://developers.google.com/workspace/admin/reports/reference/rest/v1/channels/stop): "If the
+  // channel was created by a regular user account, only the same user from the same client (as identified by the
+  // OAuth 2.0 client IDs from the auth tokens) who created the channel can stop the channel." The path is the discovery
+  // document's and the push guide's.
+  app.post("/admin/reports_v1/channels/stop", async (c) => {
+    const admin = requireSuperAdmin(c, store);
+    if (admin instanceof Response) return admin;
+    const body = await parseGoogleBody(c);
+    const email = getAuthenticatedEmail(c) ?? admin.email;
+    const clientId = requestClientId(c, store);
+    const channel = gs.reportsChannels
+      .findBy("channel_id", typeof body.id === "string" ? body.id : "")
+      .find(
+        (candidate) =>
+          candidate.resource_id === body.resourceId &&
+          candidate.creator_email === email &&
+          candidate.creator_client_id === clientId,
+      );
+    // Google does not document the answer to an unknown channel; the emulator answers `notFound`.
+    if (!channel) return googleApiError(c, 404, "Channel not found", "notFound", "NOT_FOUND");
+    gs.reportsChannels.delete(channel.id);
+    // "If successful, this method returns an empty response body."
+    return c.body(null, 200);
   });
 }

@@ -23,6 +23,13 @@ function inAccount(user: GoogleUser | undefined): user is GoogleUser {
   return Boolean(user?.hd && user.uid);
 }
 
+const activityListeners = new WeakMap<Store, Array<(activity: GoogleActivity) => void>>();
+
+/** Calls `listener` with each activity recorded in `store` from now on. */
+export function onActivity(store: Store, listener: (activity: GoogleActivity) => void): void {
+  activityListeners.set(store, [...(activityListeners.get(store) ?? []), listener]);
+}
+
 function record(
   c: Context,
   store: Store,
@@ -33,7 +40,7 @@ function record(
 ): void {
   const gs = getGoogleStore(store);
   const client = oauthClientId ? gs.oauthClients.findOneBy("client_id", oauthClientId) : undefined;
-  gs.activities.insert({
+  const activity = gs.activities.insert({
     application_name: application,
     time: new Date().toISOString(),
     // "Unique qualifier if multiple events have the same time", an int64.
@@ -45,6 +52,7 @@ function record(
     ip_address: clientAddress(c.req.raw) ?? null,
     events,
   });
+  for (const listener of activityListeners.get(store) ?? []) listener(activity);
 }
 
 /** A sign-in event (`login_success`, `login_failure`) of the Login application, type `login`. */
@@ -112,7 +120,7 @@ export function recordTokenEvent(
 }
 
 /** The OAuth client of the access token a request carries, if the emulator issued it from a grant. */
-function requestClientId(c: Context, store: Store): string | null {
+export function requestClientId(c: Context, store: Store): string | null {
   const token = c.get("authToken");
   return (token && tokenGrant(store, token)?.clientId) || null;
 }
