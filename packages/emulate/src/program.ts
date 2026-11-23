@@ -116,6 +116,7 @@ Google Admin SDK Directory:
 Google Admin SDK Reports:
   activities.list under /admin/reports/v1 for the login, token, and admin applications; discovery at
   /$discovery/rest?version=reports_v1. Records sign-ins, grants and revocations, Directory changes, sign-outs and token deletions.
+  activities.watch pushes each new matching activity to a channel's address; channels.stop ends it.
   In strict mode, calls need admin.reports.audit.readonly and a super administrator.
 
 Google OIDC:

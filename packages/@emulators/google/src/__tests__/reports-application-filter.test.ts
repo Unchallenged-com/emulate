@@ -100,6 +100,9 @@ describe("Google Reports API applicationInfoFilter", () => {
     const byPortal = await list(`oAuthClientId="${portal.client_id}"`);
     expect(byPortal.items?.map((activity) => activity.events[0].name)).toEqual(["DELETE_USER"]);
     expect((await list('oAuthClientId="unknown-client"')).items).toBeUndefined();
+    // AIP-160 allows spaces around the comparison operator.
+    const spaced = await list(`oAuthClientId = "${console_.client_id}"`);
+    expect(spaced.items?.map((activity) => activity.events[0].name)).toEqual(["CREATE_USER"]);
     const malformed = await request(`${reports}/admin?applicationInfoFilter=${console_.client_id}`, fromConsole);
     expect(malformed.status).toBe(400);
     // Sign-ins carry no application: the filter leaves none of them.

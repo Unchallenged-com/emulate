@@ -1,5 +1,6 @@
 // A subset of Google's Admin SDK Reports API discovery document (revision 20261111): activities.list and the
-// Activity fields this emulator fills, as Google publishes them. Every list parameter is kept so that clients built
+// Activity fields this emulator fills, as Google publishes them, with activities.watch, channels.stop and the Channel
+// schema from revision 20261117. Every list parameter is kept so that clients built
 // from the document accept them; the route refuses the ones it does not model.
 const document = {
   kind: "discovery#restDescription",
@@ -95,6 +96,52 @@ const document = {
     },
   },
   schemas: {
+    Channel: {
+      properties: {
+        resourceUri: { description: "A version-specific identifier for the watched resource.", type: "string" },
+        token: {
+          description:
+            "An arbitrary string delivered to the target address with each notification delivered over this channel. Optional.",
+          type: "string",
+        },
+        kind: {
+          default: "api#channel",
+          type: "string",
+          description:
+            'Identifies this as a notification channel used to watch for changes to a resource, which is "`api#channel`".',
+        },
+        payload: {
+          description:
+            "A Boolean value to indicate whether payload is wanted. A payload is data that is sent in the body of an HTTP POST, PUT, or PATCH message and contains important information about the request. Optional.",
+          type: "boolean",
+        },
+        id: { description: "A UUID or similar unique string that identifies this channel.", type: "string" },
+        params: {
+          type: "object",
+          additionalProperties: { type: "string" },
+          description: "Additional parameters controlling delivery channel behavior. Optional.",
+        },
+        type: {
+          type: "string",
+          description: 'The type of delivery mechanism used for this channel. The value should be set to `"web_hook"`.',
+        },
+        resourceId: {
+          description:
+            "An opaque ID that identifies the resource being watched on this channel. Stable across different API versions.",
+          type: "string",
+        },
+        expiration: {
+          type: "string",
+          description:
+            "Date and time of notification channel expiration, expressed as a Unix timestamp, in milliseconds. Optional.",
+          format: "int64",
+        },
+        address: { description: "The address where notifications are delivered for this channel.", type: "string" },
+      },
+      description: "A notification channel used to watch for resource changes.",
+      type: "object",
+      id: "Channel",
+    },
     Activities: {
       properties: {
         etag: {
@@ -496,6 +543,172 @@ const document = {
               ],
             },
           },
+        },
+        watch: {
+          path: "admin/reports/v1/activity/users/{userKey}/applications/{applicationName}/watch",
+          response: { $ref: "Channel" },
+          description:
+            "Start receiving notifications for account activities. For more information, see Receiving Push Notifications.",
+          scopes: ["https://www.googleapis.com/auth/admin.reports.audit.readonly"],
+          parameters: {
+            maxResults: {
+              type: "integer",
+              description:
+                "Determines how many activity records are shown on each response page. For example, if the request sets `maxResults=1` and the report has two activities, the report has two pages. The response's `nextPageToken` property has the token to the second page. The `maxResults` query string is optional in the request. The default value is 1000.",
+              format: "int32",
+              location: "query",
+              minimum: "1",
+              default: "1000",
+              maximum: "1000",
+            },
+            endTime: {
+              location: "query",
+              description:
+                "Sets the end of the range of time shown in the report. The date is in the RFC 3339 format, for example 2010-10-28T10:26:35.000Z. The default value is the approximate time of the API request. An API report has three basic time concepts: - *Date of the API's request for a report*: When the API created and retrieved the report. - *Report's start time*: The beginning of the timespan shown in the report. The `startTime` must be before the `endTime` (if specified) and the current time when the request is made, or the API returns an error. - *Report's end time*: The end of the timespan shown in the report. For example, the timespan of events summarized in a report can start in April and end in May. The report itself can be requested in August. If the `endTime` is not specified, the report returns all activities from the `startTime` until the current time or the most recent 180 days if the `startTime` is more than 180 days in the past.",
+              pattern:
+                "(\\d\\d\\d\\d)-(\\d\\d)-(\\d\\d)T(\\d\\d):(\\d\\d):(\\d\\d)(?:\\.(\\d+))?(?:(Z)|([-+])(\\d\\d):(\\d\\d))",
+              type: "string",
+            },
+            userKey: {
+              required: true,
+              location: "path",
+              description:
+                "Represents the profile ID or the user email for which the data should be filtered. Can be `all` for all information, or `userKey` for a user's unique Google Workspace profile ID or their primary email address. Must not be a deleted user. For a deleted user, call `users.list` in Directory API with `showDeleted=true`, then use the returned `ID` as the `userKey`.",
+              type: "string",
+            },
+            filters: {
+              pattern: "(.+[<,<=,==,>=,>,<>].+,)*(.+[<,<=,==,>=,>,<>].+)",
+              description:
+                "The `filters` query string is a comma-separated list composed of event parameters manipulated by relational operators. Event parameters are in the form `{parameter1 name}{relational operator}{parameter1 value},{parameter2 name}{relational operator}{parameter2 value},...` These event parameters are associated with a specific `eventName`. An empty report is returned if the request's parameter doesn't belong to the `eventName`. For more information about the available `eventName` fields for each application and their associated parameters, go to the [ApplicationName](#applicationname) table, then click through to the Activity Events page in the Appendix for the application you want. In the following Drive activity examples, the returned list consists of all `edit` events where the `doc_id` parameter value matches the conditions defined by the relational operator. In the first example, the request returns all edited documents with a `doc_id` value equal to `12345`. In the second example, the report returns any edited documents where the `doc_id` value is not equal to `98765`. The `<>` operator is URL-encoded in the request's query string (`%3C%3E`): ``` GET...&eventName=edit&filters=doc_id==12345 GET...&eventName=edit&filters=doc_id%3C%3E98765 ``` A `filters` query supports these relational operators: * `==`\u2014'equal to'. * `<>`\u2014'not equal to'. Must be URL-encoded (%3C%3E). * `<`\u2014'less than'. Must be URL-encoded (%3C). * `<=`\u2014'less than or equal to'. Must be URL-encoded (%3C=). * `>`\u2014'greater than'. Must be URL-encoded (%3E). * `>=`\u2014'greater than or equal to'. Must be URL-encoded (%3E=). **Note:** The API doesn't accept multiple values of the same parameter. If a parameter is supplied more than once in the API request, the API only accepts the last value of that parameter. In addition, if an invalid parameter is supplied in the API request, the API ignores that parameter and returns the response corresponding to the remaining valid parameters. If no parameters are requested, all parameters are returned.",
+              location: "query",
+              type: "string",
+            },
+            applicationName: {
+              enum: [
+                "access_transparency",
+                "admin",
+                "calendar",
+                "chat",
+                "drive",
+                "gcp",
+                "gplus",
+                "groups",
+                "groups_enterprise",
+                "jamboard",
+                "login",
+                "meet",
+                "mobile",
+                "rules",
+                "saml",
+                "token",
+                "user_accounts",
+                "context_aware_access",
+                "chrome",
+                "data_studio",
+                "keep",
+                "classroom",
+              ],
+              required: true,
+              location: "path",
+              enumDescriptions: [
+                "The Google Workspace Access Transparency activity reports return information about different types of Access Transparency activity events.",
+                "The Admin console application's activity reports return account information about different types of administrator activity events.",
+                "The Google Calendar application's activity reports return information about various Calendar activity events.",
+                "The Chat activity reports return information about various Chat activity events.",
+                "The Google Drive application's activity reports return information about various Google Drive activity events. The Drive activity report is only available for Google Workspace Business and Google Workspace Enterprise customers.",
+                "The Google Cloud Platform application's activity reports return information about various GCP activity events.",
+                "The Google+ application's activity reports return information about various Google+ activity events.",
+                "The Google Groups application's activity reports return information about various Groups activity events.",
+                "The Enterprise Groups activity reports return information about various Enterprise group activity events.",
+                "The Jamboard activity reports return information about various Jamboard activity events.",
+                "The Login application's activity reports return account information about different types of Login activity events.",
+                "The Meet Audit activity report returns information about different types of Meet Audit activity events.",
+                "The Device Audit activity report returns information about different types of Device Audit activity events.",
+                "The Rules activity report returns information about different types of Rules activity events.",
+                "The SAML activity report returns information about different types of SAML activity events.",
+                "The Token application's activity reports return account information about different types of Token activity events.",
+                "The User Accounts application's activity reports return account information about different types of User Accounts activity events.",
+                "The Context-aware access activity reports return information about users' access denied events due to Context-aware access rules.",
+                "The Chrome activity reports return information about Chrome browser and Chrome OS events.",
+                "The Data Studio activity reports return information about various types of Data Studio activity events.",
+                "The Keep application's activity reports return information about various Google Keep activity events. The Keep activity report is only available for Google Workspace Business and Enterprise customers.",
+                "The Classroom activity reports return information about different types of [Classroom activity events](https://developers.google.com/workspace/admin/reports/v1/appendix/activity/classroom).",
+              ],
+              description: "Application name for which the events are to be retrieved.",
+              type: "string",
+              pattern:
+                "(access_transparency)|(admin)|(calendar)|(chat)|(chrome)|(classroom)|(context_aware_access)|(data_studio)|(drive)|(gcp)|(gplus)|(groups)|(groups_enterprise)|(jamboard)|(keep)|(login)|(meet)|(mobile)|(rules)|(saml)|(token)|(user_accounts)",
+            },
+            groupIdFilter: {
+              location: "query",
+              description:
+                '`Deprecated`. This field is deprecated and is no longer supported. Comma separated group ids (obfuscated) on which user activities are filtered, i.e. the response will contain activities for only those users that are a part of at least one of the group ids mentioned here. Format: "id:abc123,id:xyz456" *Important:* To filter by groups, you must explicitly add the groups to your filtering groups allowlist. For more information about adding groups to filtering groups allowlist, see [Filter results by Google Group](https://support.google.com/a/answer/11482175)',
+              type: "string",
+              pattern: "(id:[a-z0-9]+(,id:[a-z0-9]+)*)",
+              deprecated: true,
+            },
+            orgUnitID: {
+              location: "query",
+              deprecated: true,
+              description:
+                "`Deprecated`. This field is deprecated and is no longer supported. ID of the organizational unit to report on. Activity records will be shown only for users who belong to the specified organizational unit. Data before Dec 17, 2018 doesn't appear in the filtered results.",
+              default: "",
+              pattern: "(id:[a-z0-9]+)",
+              type: "string",
+            },
+            pageToken: {
+              location: "query",
+              description:
+                "The token to specify next page. A report with multiple pages has a `nextPageToken` property in the response. In your follow-on request getting the next page of the report, enter the `nextPageToken` value in the `pageToken` query string.",
+              type: "string",
+            },
+            startTime: {
+              description:
+                "Sets the beginning of the range of time shown in the report. The date is in the RFC 3339 format, for example 2010-10-28T10:26:35.000Z. The report returns all activities from `startTime` until `endTime`. The `startTime` must be before the `endTime` (if specified) and the current time when the request is made, or the API returns an error.",
+              pattern:
+                "(\\d\\d\\d\\d)-(\\d\\d)-(\\d\\d)T(\\d\\d):(\\d\\d):(\\d\\d)(?:\\.(\\d+))?(?:(Z)|([-+])(\\d\\d):(\\d\\d))",
+              type: "string",
+              location: "query",
+            },
+            customerId: {
+              description: "The unique ID of the customer to retrieve data for.",
+              type: "string",
+              pattern: "C.+|my_customer",
+              location: "query",
+            },
+            eventName: {
+              location: "query",
+              description:
+                "The name of the event being queried by the API. Each `eventName` is related to a specific Google Workspace service or feature which the API organizes into types of events. An example is the Google Calendar events in the Admin console application's reports. The Calendar Settings `type` structure has all of the Calendar `eventName` activities reported by the API. When an administrator changes a Calendar setting, the API reports this activity in the Calendar Settings `type` and `eventName` parameters. For more information about `eventName` query strings and parameters, see the list of event names for various applications above in `applicationName`.",
+              type: "string",
+            },
+            actorIpAddress: {
+              type: "string",
+              location: "query",
+              description:
+                "The Internet Protocol (IP) Address of host where the event was performed. This is an additional way to filter a report's summary using the IP address of the user whose activity is being reported. This IP address may or may not reflect the user's physical location. For example, the IP address can be the user's proxy server's address or a virtual private network (VPN) address. This parameter supports both IPv4 and IPv6 address versions.",
+            },
+          },
+          parameterOrder: ["userKey", "applicationName"],
+          request: { $ref: "Channel" },
+          httpMethod: "POST",
+          id: "reports.activities.watch",
+          flatPath: "admin/reports/v1/activity/users/{userKey}/applications/{applicationName}/watch",
+        },
+      },
+    },
+    channels: {
+      methods: {
+        stop: {
+          path: "admin/reports_v1/channels/stop",
+          scopes: ["https://www.googleapis.com/auth/admin.reports.audit.readonly"],
+          parameterOrder: [],
+          httpMethod: "POST",
+          flatPath: "admin/reports_v1/channels/stop",
+          description: "Stop watching resources through this channel.",
+          id: "admin.channels.stop",
+          request: { $ref: "Channel" },
+          parameters: {},
         },
       },
     },

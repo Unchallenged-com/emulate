@@ -101,7 +101,7 @@ export function googleAuthMiddleware(app: Hono<AppEnv>, store: Store): Middlewar
     if (!route) return next();
     const path = route.path.replace(/^\/upload\//, "/");
     if (
-      !/^\/(gmail\/v1|drive\/v3|calendar\/v3|admin\/directory\/v1|admin\/reports\/v1|groups\/v1\/groups)\//.test(
+      !/^\/(gmail\/v1|drive\/v3|calendar\/v3|admin\/directory\/v1|admin\/reports\/v1|admin\/reports_v1|groups\/v1\/groups)\//.test(
         path,
       ) &&
       path !== "/oauth2/v2/userinfo"
